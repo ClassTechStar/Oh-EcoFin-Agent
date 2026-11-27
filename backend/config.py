@@ -74,6 +74,19 @@ class AppConfig(BaseSettings):
     lan_mode: bool = False
 
 
+class ExecutionConfig(BaseSettings):
+    """实盘券商通道配置（默认关闭；开启也必须显式注入适配器与账户）。"""
+
+    live_enabled: bool = False
+    broker_kind: str = "qmt"          # qmt | http
+    account_id: str = ""
+    qmt_path: str = ""                # miniQMT userdata_mini 路径
+    qmt_session_id: int = 0
+    http_base_url: str = ""           # 券商 OpenAPI 网关
+    http_token: str = ""
+    timeout_seconds: float = 10.0
+
+
 class Settings(BaseSettings):
     """根配置对象。环境变量前缀 FINAGENT_，嵌套分隔符 __。"""
 
@@ -90,6 +103,7 @@ class Settings(BaseSettings):
     server: ServerConfig = Field(default_factory=ServerConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     app: AppConfig = Field(default_factory=AppConfig)
+    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
 
     db_path: str = str(PROJECT_ROOT / "data" / "finagent.db")
     cassette_dir: str = str(PROJECT_ROOT / "data" / "cassettes_frozen")

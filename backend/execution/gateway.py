@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 class GatewayError(Exception):
     """网关基础异常。"""
 
+    def __init__(self, message: str, hint: str = ""):
+        super().__init__(message)
+        self.hint = hint
+
 
 class GatewayDisconnectedError(GatewayError):
     """连接断开（可重试；幂等键保证重试不重复成交）。"""
