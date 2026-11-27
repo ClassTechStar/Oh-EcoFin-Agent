@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "rows": 50000,
+  "p95_limit_ms": 2000.0,
+  "metrics": {
+    "catalog_search": {
+      "samples": 10,
+      "p50_ms": 12.23,
+      "p95_ms": 12.5,
+      "max_ms": 12.5
+    },
+    "dataset_profile": {
+      "samples": 5,
+      "p50_ms": 41.78,
+      "p95_ms": 49.4,
+      "max_ms": 49.4
+    },
+    "sql_query": {
+      "samples": 10,
+      "p50_ms": 19.18,
+      "p95_ms": 72.38,
+      "max_ms": 72.38
+    },
+    "analysis_group": {
+      "samples": 10,
+      "p50_ms": 21.36,
+      "p95_ms": 22.66,
+      "max_ms": 22.66
+    },
+    "report_compose": {
+      "samples": 3,
+      "p50_ms": 139.08,
+      "p95_ms": 1174.8,
+      "max_ms": 1174.8
+    }
+  },
+  "failed": {},
+  "temp_dir": "C:\\Users\\18948\\AppData\\Local\\Temp\\oh-ecofin-bench-kfmxloq2"
+}

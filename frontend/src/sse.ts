@@ -139,6 +139,12 @@ export const api = {
   listSessions: () => rest<any>('/sessions'),
   messages: (sid: string) => rest<any>(`/sessions/${sid}/messages`),
   costSummary: () => rest<any>('/cost/summary'),
+  sendFeedback: (body: { session_id: string; run_id?: string; rating: 'up' | 'down'; comment?: string }) =>
+    rest<any>('/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }),
   riskQuestions: () => rest<any>('/risk-questions'),
   decisions: (symbol: string) => rest<any>(`/decisions/${symbol}`),
   signals: (symbol: string, mode = 'long_only', gross = 0.8) =>

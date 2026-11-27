@@ -31,6 +31,18 @@ def settings(tmp_path, monkeypatch):
     return s
 
 
+@pytest.fixture(autouse=True)
+def hermetic_cassette_dir(tmp_path, monkeypatch):
+    """API/单测密闭：把 cassette_dir 指向空临时目录。
+
+    冻结卡带现随仓库分发（tests/cassettes_frozen/ 真实数据），若不隔离，
+    demo 模式工具会读到真实行情（如茅台 1472 元）破坏确定性断言。
+    冻结卡带的回放语义由 test_integration_cassette.py 专门验证。
+    """
+    monkeypatch.setenv("FINAGENT_CASSETTE_DIR", str(tmp_path / "cassettes_empty"))
+    yield
+
+
 def synthetic_ohlcv(days: int = 600, seed: int = 7, start: float = 100.0) -> pd.DataFrame:
     """合成日线 OHLCV（几何随机游走 + 趋势），含 date/open/high/low/close/volume。"""
     rng = np.random.default_rng(seed)

@@ -6,8 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backend.quant.compliance import (Portfolio, compliance_check,
-                                      map_score_to_level)
+from backend.quant.compliance import Portfolio, compliance_check, map_score_to_level
 from backend.quant.portfolio import PortfolioOptimizer, _assert_prices
 
 

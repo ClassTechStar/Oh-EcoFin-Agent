@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+#: Prompt 版本号（L3 版本化 A/B：feedback 按 version 分桶统计，修改从拍脑袋变数据驱动）
+PROMPT_VERSION = "v4.1.0"
+
 # C.1 System Prompt（实时性规范）
 SYSTEM_PROMPT = """你是 A 股投研助手（教学演示用途，所有输出不构成任何投资建议，不提供任何形式的投资建议服务）。
 

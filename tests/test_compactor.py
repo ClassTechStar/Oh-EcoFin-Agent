@@ -5,9 +5,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from backend.engine.compactor import (compact_backtest, compact_financial,
-                                      compact_kline, compact_news,
-                                      compact_quote, label_sentiment, pack)
+from backend.engine.compactor import (
+    compact_backtest,
+    compact_financial,
+    compact_kline,
+    compact_news,
+    compact_quote,
+    label_sentiment,
+    pack,
+)
 
 GOLDEN = Path(__file__).resolve().parent / "golden"
 

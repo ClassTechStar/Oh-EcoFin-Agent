@@ -31,7 +31,8 @@ def api(tmp_path):
 def test_health_reports_data_dirs(api):
     client, _, settings = api
     data = client.get("/api/health").json()
-    assert data["catalog"]["instruments"] == 0
+    # 开箱首价值：空目录自动导入内置迷你标的（≥5 只），不再是 0
+    assert data["catalog"]["instruments"] >= 5
     assert data["datasets"]["count"] == 0
     assert data["data_dirs"]["catalog"] == settings.catalog.dir
     assert data["data_dirs"]["datasets"] == settings.datasets.dir
@@ -39,6 +40,7 @@ def test_health_reports_data_dirs(api):
 
 def test_catalog_endpoints(api):
     client, ctx, _ = api
+    baseline = ctx.catalog.count()  # 内置迷你目录的标的数
     ctx.catalog.import_records([{
         "instrument_id": "CN:600519", "symbol": "600519.SS", "exchange": "SHH",
         "asset_class": "equity", "name": "Kweichow Moutai", "country": "China",
@@ -50,8 +52,9 @@ def test_catalog_endpoints(api):
     assert hit["items"][0]["instrument_id"] == "CN:600519"
 
     stats = client.get("/api/catalog/stats").json()
-    assert stats["total"] == 1
-    assert stats["snapshots"][0]["source"] == "fixture"
+    assert stats["total"] == baseline + 1
+    snap_sources = [s["source"] for s in stats["snapshots"]]
+    assert "fixture" in snap_sources
 
     item = client.get("/api/catalog/instruments/CN:600519").json()
     assert item["instrument"]["name"] == "Kweichow Moutai"

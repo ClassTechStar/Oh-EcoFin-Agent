@@ -121,7 +121,7 @@ onMounted(async () => {
 
     <div v-if="loading && !items.length" class="skeleton" style="height: 160px" />
     <MdEmptyState v-else-if="!items.length" icon="analysis" title="没有匹配的标的"
-                  description="换一个代码/名称/行业关键词，或先导入 FinanceDatabase 快照" />
+                  description="换一个代码/名称/行业关键词；仓库已内置 10 只演示标的（贵州茅台/平安银行/宁德时代等），完整 30 万+ 目录用 FinanceDatabase 快照导入" />
 
     <MdCard v-else variant="outlined" class="table-card">
       <div class="card-head">

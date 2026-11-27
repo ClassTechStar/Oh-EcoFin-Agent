@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 COMMISSION_RATE = 0.00025
 MIN_COMMISSION = 5.0
 STAMP_DUTY = 0.0005
+#: 固定单边滑点（快照价成交假设的诚实化：可配置归零，回测口径随报告声明）
+SLIPPAGE_RATE = 0.002
 INIT_CASH = 1_000_000
 LOT_SIZE = 100
 #: 权益曲线返回上限（曲线会进模型上下文，避免 token 爆炸）
@@ -50,8 +52,8 @@ def limit_pct_for(symbol: str, name: str = "") -> float:
 
 
 def build_cerebro(df: pd.DataFrame, symbol: str, strategy_cls, strategy_params: dict,
-                  cash: float = INIT_CASH):
-    """装配 Cerebro：数据适配 + A股佣金 scheme + 策略。"""
+                  cash: float = INIT_CASH, slippage: float = SLIPPAGE_RATE):
+    """装配 Cerebro：数据适配 + A股佣金 scheme + 固定比例滑点 + 策略。"""
     import backtrader as bt
 
     validate_columns(df)
@@ -83,6 +85,10 @@ def build_cerebro(df: pd.DataFrame, symbol: str, strategy_cls, strategy_params: 
     cerebro.adddata(AKShareData(dataname=data), name=str(symbol))
     cerebro.broker.setcash(cash)
     cerebro.broker.addcommissioninfo(AShareCommission())
+    if slippage > 0:
+        # 固定比例滑点（单边）：买卖均按不利方向偏移成交价
+        cerebro.broker.set_slippage_perc(perc=slippage, slip_limit=True,
+                                         slip_match=True, slip_out=False)
     cerebro.addstrategy(strategy_cls, **strategy_params)
     return cerebro
 
@@ -230,19 +236,20 @@ def pair_round_trips(executions: list[dict]) -> list[dict]:
     return trips
 
 
-def _cost_model() -> dict:
+def _cost_model(slippage: float = SLIPPAGE_RATE) -> dict:
     """成本模型显式回传（让「扣了多少」可复核，而非埋在实现里）。"""
     return {
         "commission_rate": COMMISSION_RATE,
         "min_commission": MIN_COMMISSION,
         "stamp_duty": STAMP_DUTY,
+        "slippage": slippage,  # 固定单边滑点（0 = 未建模，口径随报告声明）
         "lot_size": LOT_SIZE,
-        "slippage": 0.0,  # Backtrader 侧未建模滑点，显式声明为 0
     }
 
 
 def run_backtest(df: pd.DataFrame, symbol: str, fast: int = 5, slow: int = 20,
-                 cash: float = INIT_CASH) -> dict:
+                 cash: float = INIT_CASH,
+                 slippage: float = SLIPPAGE_RATE) -> dict:
     """双均线回测主入口（同步函数，调用方在线程池执行）。
 
     返回结构对齐「可信回测」契约：metrics / cost_model / skipped / executions /
@@ -260,7 +267,8 @@ def run_backtest(df: pd.DataFrame, symbol: str, fast: int = 5, slow: int = 20,
 
     strategy_cls = DualMAStrategy.build(symbol, fast, slow)
     cerebro = build_cerebro(df, symbol, strategy_cls,
-                            {"pct_limit": limit_pct_for(symbol)}, cash)
+                            {"pct_limit": limit_pct_for(symbol)}, cash,
+                            slippage=slippage)
     trade_pnls: list[float] = []
 
     class _TradeRecorder(bt.Analyzer):
@@ -290,7 +298,9 @@ def run_backtest(df: pd.DataFrame, symbol: str, fast: int = 5, slow: int = 20,
         "executions": executions,
         "trades": pair_round_trips(executions),
         "equity_curve": equity[-CURVE_LIMIT:],
-        "cost_model": _cost_model(),
+        # 日收益率序列（与 metrics 同源；walk-forward bootstrap CI / 前端误差棒复用）
+        "daily_returns": [round(float(x), 6) for x in returns.values],
+        "cost_model": _cost_model(slippage),
         "skipped": skipped,
         "data_asof": str(df["date"].iloc[-1])[:10],
         "data_start": str(df["date"].iloc[0])[:10],

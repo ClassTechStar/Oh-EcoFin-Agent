@@ -89,16 +89,18 @@
   --motion-fade-in: 150ms cubic-bezier(0.4, 0, 0.2, 1);
   --motion-fade-out: 120ms cubic-bezier(0.4, 0, 1, 1);
 
-  /* ---------- 排版字阶（MD3 简化 web 字阶） ---------- */
+  /* ---------- 排版字阶（MD3 简化 web 字阶） ----------
+     修复记录：原值 "14px / 20px" 简写对 font-size 是非法 CSS 值（全站字阶实际失效
+     回退 16px 默认），改为纯 px；行距由组件 line-height: 1.6 承担。 */
   --font-ui: "HarmonyOS Sans SC", "MiSans", "PingFang SC", "Microsoft YaHei UI",
              "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", Consolas, "Courier New", monospace;
-  --type-headline: 24px / 32px;
-  --type-title-lg: 22px / 28px;
-  --type-title: 16px / 24px;
-  --type-body: 14px / 20px;
-  --type-body-lg: 15px / 22px;
-  --type-label: 12px / 16px;
+  --type-headline: 24px;
+  --type-title-lg: 22px;
+  --type-title: 16px;
+  --type-body: 14px;
+  --type-body-lg: 15px;
+  --type-label: 12px;
 
   /* ---------- 间距（4dp 栅格） ---------- */
   --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
@@ -249,3 +251,14 @@
   outline-offset: 2px;
   border-radius: var(--md-radius-s);
 }
+
+/* ---------- 长辈模式（字号 ×1.4，SettingsView 开关 → html.elder-mode） ---------- */
+html.elder-mode {
+  --type-headline: 34px;
+  --type-title-lg: 30px;
+  --type-title: 22px;
+  --type-body: 20px;
+  --type-body-lg: 21px;
+  --type-label: 17px;
+}
+html.elder-mode body { line-height: 1.7; }

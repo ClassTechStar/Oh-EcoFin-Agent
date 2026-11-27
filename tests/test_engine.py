@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-import pytest
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.engine.askuser import AskUserManager
 from backend.engine.debate import DebateOrchestrator
@@ -13,7 +13,6 @@ from backend.engine.events import SessionStream
 from backend.engine.gateway import LLMResult, ToolCall
 from backend.engine.react import MAX_ROUNDS, ChatTask, ReActEngine
 from backend.tools.registry import ToolRegistry, ToolSpec
-from pydantic import BaseModel, ConfigDict, Field
 
 
 class P(BaseModel):
@@ -32,6 +31,14 @@ class MockGateway:
     async def chat(self, messages, tools=None, tier="primary", *, session_id="",
                    role="chat", stream_cb=None, temperature=0.3):
         self.chat_calls.append({"messages": [dict(m) for m in messages], "tools": tools})
+        # 风控复核（debate:risk）走 simple_texts 回放（文本响应 = 正则兜底路径；
+        # submit_risk_review 工具化提交路径由 tests/test_committee.py 覆盖）
+        if role == "debate:risk":
+            content = str(messages[-1]["content"])
+            text = next((v for k, v in self.simple_texts.items()
+                         if content.startswith(k)), self.simple_texts.get("*", "默认"))
+            return LLMResult(text=text, tool_calls=[], usage_in=10, usage_out=5,
+                             cost_cents=1, model="fake", tier=tier)
         step = self.script.pop(0) if self.script else {"text": "剧本耗尽"}
         text = step.get("text", "")
         if text and stream_cb:
@@ -66,8 +73,9 @@ def build_registry():
 
 
 def build_engine(gateway, reg):
-    from backend.db import Database
     import tempfile
+
+    from backend.db import Database
 
     db = Database(tempfile.mktemp(suffix=".db"))
     mgr = AskUserManager(db, timeout_seconds=5)
@@ -280,8 +288,71 @@ async def test_debate_unsupported_args_downweighted():
     })
     gw.script = [{"text": DP}]
     orch = DebateOrchestrator(gw, reg, debate_rounds=1)
-    out = await orch.run("d4", ["600519"], "问题")
+    await orch.run("d4", ["600519"], "问题")
     # 综合 prompt 中应出现 unsupported 编号（GW 最后一次 chat 调用的 system 消息）
     synth_call = gw.chat_calls[-1]
     system_msg = synth_call["messages"][0]["content"]
     assert "9" in system_msg and "无数据支撑" in system_msg
+
+
+async def test_debate_checkpoint_resume_skips_analyst():
+    """checkpoint 续跑：DataPack 就位时跳过分析师取数（最贵链路不重跑）。"""
+    reg, calls = build_registry()
+    gw = MockGateway(simple_texts={
+        "你是风控经理": json.dumps({"supported": [], "unsupported": [],
+                                    "concerns": []}, ensure_ascii=False),
+    })
+    gw.script = []  # 若仍走分析师，剧本将耗尽
+    orch = DebateOrchestrator(gw, reg, debate_rounds=1)
+    out = await orch.run("d5", ["600519"], "问题", resume_datapack=DP)
+    assert out["resumed"] is True
+    assert out["datapack"] == DP
+    assert out["report"].get("ok", True)
+    # 分析师未被调用（chat_calls 无 debate:analyst 之前的剧本消耗）
+    analyst_msgs = [c for c in gw.chat_calls
+                    if c["messages"] and "投研分析师" in str(c["messages"][0])]
+    assert analyst_msgs == []
+
+
+async def test_react_plan_event_emitted():
+    """plan 事件：planning 阶段输出 1-3 步计划（自主性可视化）。"""
+    reg, _ = build_registry()
+    gw = MockGateway(simple_texts={
+        "为回答用户问题": json.dumps(["获取行情", "对比走势"], ensure_ascii=False),
+    }, script=[{"text": "直接回答。"}])
+    engine = ReActEngine(gw, reg, AskUserManager.__new__(AskUserManager))
+    stream = SessionStream("p1")
+    task = ChatTask(session_id="p1", user_message="600519 怎么样？")
+    engine.run_store = None
+    await engine.run(task, stream)
+    events = [ev.event for ev in stream._buffer]
+    plan_events = [ev.payload for ev in stream._buffer if ev.event == "plan"]
+    assert "plan" in events
+    assert plan_events[0]["steps"] == ["获取行情", "对比走势"]
+
+
+async def test_react_self_critique_persisted_and_injected(tmp_db):
+    """L2 进化闭环：终局 self_critique 落库 → 下次 run 注入 system 消息。"""
+    from backend.engine.runs import RunStore
+
+    reg, _ = build_registry()
+    gw = MockGateway(simple_texts={
+        "回顾本次任务调用的工具": "下次应先取行情再回答，避免重复调用。",
+        "为回答用户问题": "[]",
+    }, script=[{"text": "回答完成。"}])
+    store = RunStore(tmp_db)
+    engine = ReActEngine(gw, reg, AskUserManager.__new__(AskUserManager),
+                         run_store=store, plan_enabled=False)
+    stream = SessionStream("p2")
+    task = ChatTask(session_id="p2", user_message="问题一", mode="chat")
+    await engine.run(task, stream)
+    saved = store.latest_self_critique("p2", "chat")
+    assert saved == "下次应先取行情再回答，避免重复调用。"
+    # 第二次 run：注入上次教训（chat_calls[1] = 第二次 run 的首条模型调用）
+    task2 = ChatTask(session_id="p2", user_message="问题二", mode="chat",
+                     last_self_critique=saved)
+    gw.script = [{"text": "第二次回答。"}]
+    await engine.run(task2, stream)
+    second_run_first_call = gw.chat_calls[1]
+    assert any("过程教训" in str(m.get("content", ""))
+               for m in second_run_first_call["messages"] if m["role"] == "system")

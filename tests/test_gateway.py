@@ -6,8 +6,13 @@ import json
 
 import pytest
 
-from backend.engine.gateway import (CostFuseOpenError, CostLedger, LLMGateway,
-                                    estimate_cost_cents, parse_tool_calls)
+from backend.engine.gateway import (
+    CostFuseOpenError,
+    CostLedger,
+    LLMGateway,
+    estimate_cost_cents,
+    parse_tool_calls,
+)
 
 
 class FakeADB:

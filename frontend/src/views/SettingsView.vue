@@ -18,6 +18,15 @@ const { mode, accent } = useTheme()
 const health = ref<any>(null)
 const { show } = useToast()
 const autoRefresh = ref(true)
+// 长辈模式：字号 ×1.4（AppShell 兜底恢复同一 localStorage 键，三端同源）
+const elderMode = ref(localStorage.getItem('elder_mode') === '1')
+
+function setElder(v: boolean) {
+  elderMode.value = v
+  localStorage.setItem('elder_mode', v ? '1' : '0')
+  document.documentElement.classList.toggle('elder-mode', v)
+  show(v ? '长辈模式已开启：字号放大，适合投顾测评' : '长辈模式已关闭', 'info')
+}
 
 const sideEffectTools = computed(() => Object.entries(
   health.value?.agent?.side_effects || {}
@@ -71,7 +80,12 @@ watch(autoRefresh, (v) => { if (!v) show('定时刷新已关闭（仅演示开�
           <span>跟随快照自动刷新徽章</span>
           <MdSwitch v-model="autoRefresh" label="自动刷新" />
         </div>
-        <p class="hint-line">设置保存在本地浏览器；三端（桌面/移动/浏览器）同源生效。</p>
+        <div class="field">
+          <span>长辈模式（字号放大 ×1.4）</span>
+          <MdSwitch :model-value="elderMode" label="长辈模式"
+                    @update:model-value="(v: boolean) => setElder(v)" />
+        </div>
+        <p class="hint-line">设置保存在本地浏览器；三端（桌面/移动/浏览器）同源生效。长辈模式配合「投顾合规」页的语音/点选测评，面向爸妈辈用户。</p>
       </MdCard>
 
       <!-- 服务健康 -->

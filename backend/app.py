@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -27,7 +27,7 @@ from backend.catalog.importer import import_financedatabase
 from backend.catalog.models import CatalogError, CatalogQuery
 from backend.catalog.store import CatalogStore
 from backend.config import Settings, load_settings
-from backend.data.calendar import TradeCalendar
+from backend.data.calendar import TradeCalendar, now_cst
 from backend.data.precompute import PrecomputeService
 from backend.data.ratelimit import TokenBucket
 from backend.data.snapshot import SnapshotService
@@ -42,7 +42,7 @@ from backend.engine.askuser import AskUserManager
 from backend.engine.debate import DebateOrchestrator
 from backend.engine.events import StreamHub
 from backend.engine.gateway import CostLedger, LLMGateway
-from backend.engine.prompts import DISCLAIMER
+from backend.engine.prompts import DISCLAIMER, PROMPT_VERSION
 from backend.engine.react import ChatTask, ReActEngine
 from backend.engine.run_state import RunBudget
 from backend.engine.runs import RunStore
@@ -104,6 +104,7 @@ from backend.sandbox.service import SandboxService
 from backend.security.keyring_loader import load_key, missing_required_keys
 from backend.security.logmask import SensitiveFilter, mask_result_for_storage
 from backend.security.tokens import generate_token, verify_token
+from backend.seed import load_mini_catalog
 from backend.signals import SignalStore
 from backend.signals.service import SignalDataError, preview_signals
 from backend.tools.advisor import (
@@ -128,7 +129,13 @@ from backend.tools.data import (
 from backend.tools.market import KlineParams, MarketTools, QuoteParams
 from backend.tools.quant import BacktestParams, FactorParams, QuantTools, WalkForwardParams
 from backend.tools.registry import ToolRegistry, ToolSpec
-from backend.tools.research import CorrelationParams, ResearchReport, ResearchTools, SymbolParams
+from backend.tools.research import (
+    CorrelationParams,
+    ResearchReport,
+    ResearchTools,
+    RiskReview,
+    SymbolParams,
+)
 from backend.tools.search import NewsParams, SearchService
 from backend.tools.trading import (
     AccountToolParams,
@@ -240,6 +247,16 @@ class AppContext:
         self.optimizer = PortfolioOptimizer()
         # M1-M3 数据基座：版本化标的目录 + 不可变数据集 + 只读 SQL
         self.catalog = CatalogStore(self.db)
+        # 开箱首价值：空目录自动导入内置迷你标的（与冻结卡带白名单同源）
+        if self.catalog.count() == 0:
+            try:
+                seed = load_mini_catalog()
+                self.catalog.import_records(
+                    seed["instruments"], source=seed["source"],
+                    source_version=seed["source_version"])
+                logger.info("内置迷你目录已导入（%d 只标的）", len(seed["instruments"]))
+            except Exception:
+                logger.exception("迷你目录导入失败（不影响启动）")
         self.datasets = DatasetService(self.db, settings)
         self.query_audit = QueryAuditStore(self.db)
         self.query = QueryEngine(
@@ -372,6 +389,11 @@ class AppContext:
             ResearchReport, research.submit_research_report, compressor="raw",
             parallel_safe=False))
         reg.register(ToolSpec(
+            "submit_risk_review", "提交风控复核结论（结构化 JSON：supported/"
+            "unsupported 为 DataPack 编号，concerns 为具体风险点）。",
+            RiskReview, research.submit_risk_review, compressor="raw",
+            parallel_safe=False))
+        reg.register(ToolSpec(
             "get_alpha_signals", "运行内置 Alpha 模型并合成目标权重（只读，不生成委托）。"
             "弃权模型会显式标注原因；权重已过约束层。",
             SignalToolParams, trading.get_alpha_signals, compressor="raw",
@@ -445,7 +467,9 @@ class AppContext:
         self.react = ReActEngine(
             self.gateway, reg, self.ask_manager,
             budget=RunBudget.from_config(s.agent, max_rounds=s.llm.max_rounds),
-            run_store=self.run_store, tool_store=self.tool_store)
+            run_store=self.run_store, tool_store=self.tool_store,
+            plan_enabled=bool(s.agent.plan_enabled),
+            self_critique_enabled=bool(s.agent.self_critique_enabled))
         self.debate = DebateOrchestrator(self.gateway, reg, s.llm.debate_rounds)
 
         # 快照预计算 fetcher 接到 market 工具
@@ -590,6 +614,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/sessions/{sid}/messages")
     async def get_messages(sid: str):
         return {"messages": ctx.sessions.messages(sid),
+                "disclaimer": DISCLAIMER}
+
+    # ---------- L1 反馈回流（👍/👎 → feedback 表 → 每周 digest） ----------
+
+    @app.post("/api/feedback")
+    async def submit_feedback(req: dict = Body(default={})):
+        """会话级反馈：done 后一枚 👍/👎 + 可选文字；prompt_version 由服务端盖章。"""
+        rating = str((req or {}).get("rating") or "")
+        if rating not in ("up", "down"):
+            raise HTTPException(422, "rating 必须是 up 或 down")
+        comment = str((req or {}).get("comment") or "")[:500]
+        ctx.db.execute(
+            "INSERT INTO feedback(session_id, run_id, rating, comment,"
+            " prompt_version, created_at) VALUES(?,?,?,?,?,?)",
+            (str((req or {}).get("session_id") or ""),
+             str((req or {}).get("run_id") or ""),
+             rating, comment, PROMPT_VERSION,
+             now_cst().strftime("%Y-%m-%d %H:%M:%S")))
+        return {"ok": True}
+
+    @app.get("/api/feedback/summary")
+    async def feedback_summary():
+        """反馈汇总（按 prompt 版本分桶——L3 A/B 的数据面）。"""
+        rows = ctx.db.query(
+            "SELECT prompt_version, rating, COUNT(*) AS c FROM feedback"
+            " GROUP BY prompt_version, rating ORDER BY prompt_version")
+        recent = ctx.db.query(
+            "SELECT session_id, rating, comment, prompt_version, created_at"
+            " FROM feedback ORDER BY created_at DESC, id DESC LIMIT 20")
+        return {"buckets": [dict(r) for r in rows],
+                "recent": [dict(r) for r in recent],
                 "disclaimer": DISCLAIMER}
 
     @app.get("/api/cost/summary")
@@ -1135,8 +1190,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         rendered = await _maybe_summarize(history)
 
+        # L2 进化注入：上次同类任务的过程教训（self_critique）
+        last_critique = ""
+        if settings.agent.self_critique_enabled:
+            try:
+                last_critique = ctx.run_store.latest_self_critique(sid, mode)
+            except Exception:
+                logger.exception("self_critique 检索失败（忽略）")
+
         task = ChatTask(session_id=sid, user_message=req.message,
-                        history=rendered, history_block=history_block_text, mode=mode)
+                        history=rendered, history_block=history_block_text,
+                        mode=mode, last_self_critique=last_critique)
         ctx.sessions.insert_message(sid, "user", req.message)
 
         async def gen():
@@ -1204,10 +1268,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             })
             return {"error": str(e)}
 
-    async def _run_debate(sid: str, symbol: str, question: str, stream):
+    async def _run_debate(sid: str, symbol: str, question: str, stream,
+                          resume_datapack: str | None = None):
         result = await ctx.debate.run(sid, [symbol] if symbol else ["000001"],
-                                      question, stream)
-        # 六段原文 + context_id 落库（断线/重启后可回放，报告 5.9 debate_runs）
+                                      question, stream,
+                                      resume_datapack=resume_datapack)
+        # 六段原文 + context_id + DataPack checkpoint 落库（报告 5.9 debate_runs；
+        # checkpoint 供 Step 2/3 失败后续跑，不重复最贵的分析师取数）
         transcript = result.get("transcript")
         if transcript:
             try:
@@ -1216,7 +1283,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 result["debate_run_id"] = persist_audit(
                     ctx.db, transcript, symbol=symbol or "000001",
                     verdict=str(result.get("report", {}).get("verdict", "neutral")),
-                    status="review" if result.get("verification_required") else "ok")
+                    status="review" if result.get("verification_required") else "ok",
+                    datapack=str(result.get("datapack") or ""))
             except Exception:
                 logger.exception("辩论审计落库失败")
         stream.publish("message_delta", {"text": json.dumps(
@@ -1277,6 +1345,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not ok:
             raise HTTPException(404, "无匹配的挂起提问（可能已超时）")
         return {"ok": True}
+
+    # ---------- 辩论 checkpoint 续跑 ----------
+
+    @app.post("/api/debate/{run_id}/resume")
+    async def debate_resume(run_id: str, req: dict = Body(default={})):
+        """从 debate_runs.datapack checkpoint 续跑辩论（Step 2/3 失败后的重试入口）。
+
+        不重复分析师取数（最贵链路）；原始工具结果不可再得，续跑结果标注 resumed=True。
+        """
+        from backend.engine.committee import load_audit
+
+        row = load_audit(ctx.db, run_id)
+        if row is None:
+            raise HTTPException(404, f"debate_run 不存在: {run_id}")
+        datapack = str(row["run"].get("datapack") or "").strip()
+        if not datapack:
+            raise HTTPException(409, "该辩论无 DataPack checkpoint（旧版本落库），请全链重跑")
+        symbol = str(row["run"].get("symbol") or "000001")
+        question = str((req or {}).get("question") or f"{symbol} 综合研判（checkpoint 续跑）")
+        sid = str((req or {}).get("session_id") or uuid.uuid4().hex[:16])
+        stream = ctx.hub.get(sid)
+        stream.persist_fn = _persist_event(sid)
+        result = await _run_debate(sid, symbol, question, stream,
+                                   resume_datapack=datapack)
+        if "error" in result:
+            raise HTTPException(502, result["error"])
+        return {"ok": True, "resumed": True, "session_id": sid,
+                "debate_run_id": result.get("debate_run_id"),
+                "report": result.get("report"),
+                "verification_required": result.get("verification_required")}
 
     # ---------- 静态托管（前端构建产物；相对路径三端同源） ----------
 

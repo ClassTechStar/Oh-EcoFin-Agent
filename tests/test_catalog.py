@@ -178,3 +178,23 @@ def test_import_financedatabase_missing_layout(tmp_path, tmp_db):
         assert e.hint
     else:  # pragma: no cover
         raise AssertionError("应抛出 CatalogError")
+
+
+def test_mini_catalog_seed_loads_and_imports(tmp_db):
+    """开箱内置迷你目录：可加载、可导入、检索可得（首价值 60 秒承诺的测试锚点）。"""
+    from backend.seed import load_mini_catalog
+
+    seed = load_mini_catalog()
+    assert seed["source"] == "builtin_seed"
+    symbols = [i["symbol"] for i in seed["instruments"]]
+    assert len(symbols) >= 5 and len(set(symbols)) == len(symbols)
+    # 与冻结卡带演示白名单同源：K 线卡带就位的标的必须能被目录检索到
+    assert "600519" in symbols and "000001" in symbols
+
+    store = CatalogStore(tmp_db)
+    result = store.import_records(seed["instruments"], source=seed["source"],
+                                  source_version=seed["source_version"])
+    assert result["rows"] == len(seed["instruments"])
+    hit = store.search(CatalogQuery(query="贵州茅台"))
+    assert hit["total"] >= 1
+    assert hit["items"][0]["symbol"] == "600519"

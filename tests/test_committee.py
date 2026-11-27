@@ -27,17 +27,39 @@ class _P(BaseModel):
 
 
 class StubGateway:
-    """最小网关：chat 走剧本，simple 按前缀回放；可注入指定角色的上游故障。"""
+    """最小网关：chat 走剧本，simple 按前缀回放；可注入指定角色的上游故障。
 
-    def __init__(self, texts: dict[str, str], fail_key: str = ""):
+    风控复核升级为 submit_risk_review 工具化提交：tools 含该工具时直接回
+    Function Calling（Schema 强约束路径）；工具缺失时回退文本（正则兜底路径）。
+    """
+
+    def __init__(self, texts: dict[str, str], fail_key: str = "",
+                 risk_via_tool: bool = True):
         self.texts = texts
         self.fail_key = fail_key
+        self.risk_via_tool = risk_via_tool
         self.script = [DP]
         self.chat_calls: list = []
 
     async def chat(self, messages, tools=None, tier="primary", *, session_id="",
                    role="chat", stream_cb=None, temperature=0.3):
-        self.chat_calls.append({"messages": [dict(m) for m in messages]})
+        self.chat_calls.append({"messages": [dict(m) for m in messages],
+                                "tools": tools or []})
+        if role == "debate:risk":
+            if self.risk_via_tool:
+                from backend.engine.gateway import ToolCall
+
+                args = json.dumps({"supported": [1, 2], "unsupported": [],
+                                   "concerns": []}, ensure_ascii=False)
+                return LLMResult(text="", tool_calls=[ToolCall(id="risk1",
+                                                               name="submit_risk_review",
+                                                               arguments=args)],
+                                 usage_in=10, usage_out=5, cost_cents=0,
+                                 model="stub", tier=tier)
+            # 正则兜底路径：直接回放风控文本（不消耗分析师剧本）
+            text = self.texts.get("你是风控经理", "剧本耗尽")
+            return LLMResult(text=text, tool_calls=[], usage_in=10, usage_out=5,
+                             cost_cents=0, model="stub", tier=tier)
         text = self.script.pop(0) if self.script else "剧本耗尽"
         return LLMResult(text=text, tool_calls=[], usage_in=10, usage_out=5,
                          cost_cents=0, model="stub", tier=tier)
@@ -52,13 +74,26 @@ class StubGateway:
         return "默认"
 
 
-def _registry() -> ToolRegistry:
+def _registry(risk_tool: bool = True) -> ToolRegistry:
     reg = ToolRegistry()
 
     async def h_quote(symbol):
         return {"ok": True, "symbol": symbol, "price": 100.0}
 
     reg.register(ToolSpec("get_quote", "q", _P, h_quote, parallel_safe=True))
+
+    if risk_tool:
+        from backend.tools.research import RiskReview
+
+        async def h_risk(supported=None, unsupported=None, concerns=None, **_):
+            review = RiskReview(supported=supported or [],
+                                unsupported=unsupported or [],
+                                concerns=concerns or [])
+            from backend.tools.research import risk_review_payload
+            return {"ok": True, "risk_review": risk_review_payload(review)}
+
+        reg.register(ToolSpec("submit_risk_review", "r", RiskReview, h_risk,
+                              parallel_safe=False))
     return reg
 
 
@@ -191,3 +226,23 @@ def test_persist_and_load_audit_roundtrip(tmp_path):
     analyst = next(s for s in loaded["sections"] if s["role"] == "analyst")
     assert analyst["raw_text"] == "证据准备" * 50
     assert load_audit(db, "missing") is None
+
+
+async def test_risk_review_regex_fallback_when_no_tool_call():
+    """模型未走 submit_risk_review 工具 → 正则提 JSON 兜底（解析成功不抬升复核）。"""
+    gw = StubGateway(dict(TEXTS), risk_via_tool=False)
+    orch = DebateOrchestrator(gw, _registry(), debate_rounds=2)
+    out = await orch.run("c3", ["600519"], "600519 值得买吗？")
+    risk = out["debate"]["risk_review"]
+    assert risk["supported"] == [1, 2] and risk["concerns"] == []
+    assert out["verification_required"] is False
+
+
+async def test_risk_review_parse_failure_flags_verification():
+    """风控 JSON 彻底解析失败 → 必须抬升 verification_required（诚实降级）。"""
+    gw = StubGateway({}, risk_via_tool=False)
+    orch = DebateOrchestrator(gw, _registry(risk_tool=False), debate_rounds=1)
+    out = await orch.run("c4", ["600519"], "问题")
+    assert out["debate"]["risk_review"]["concerns"]
+    assert any("解析失败" in c for c in out["debate"]["risk_review"]["concerns"])
+    assert out["verification_required"] is True

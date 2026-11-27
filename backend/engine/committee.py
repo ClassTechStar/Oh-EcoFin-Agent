@@ -114,6 +114,7 @@ class RoleTurn:
     change_reason: str = ""
     latency_ms: int = 0
     merged: bool = False          # True = 多空合并一次调用（1 轮降级）
+    note: str = ""                # 过程注记（如 checkpoint 恢复说明），审计可见
 
     def to_dict(self) -> dict:
         return {
@@ -129,6 +130,7 @@ class RoleTurn:
             "change_reason": self.change_reason,
             "latency_ms": self.latency_ms,
             "merged": self.merged,
+            "note": self.note,
         }
 
 
@@ -229,18 +231,23 @@ class CommitteeTranscript:
 # ---------- 落库与回放（报告 5.9 debate_runs / debate_sections） ----------
 
 def persist_audit(db, audit: dict, *, symbol: str, verdict: str,
-                  status: str = "ok", run_id: str | None = None) -> str:
-    """把一次辩论的六段原文写入 SQLite；返回 run_id。"""
+                  status: str = "ok", run_id: str | None = None,
+                  datapack: str = "") -> str:
+    """把一次辩论的六段原文写入 SQLite；返回 run_id。
+
+    datapack 一并落库（debate_runs.datapack）——辩论 checkpoint 续跑的事实源：
+    Step 2/3 失败时从该 DataPack 重试，不重复最贵的分析师取数。
+    """
     ctx = audit.get("context") or {}
     context_id = str(ctx.get("context_id") or "")
     run_id = run_id or f"{context_id or 'ctx'}-{int(time.time() * 1000)}"
     created = str(audit.get("created_at") or _now())
     db.execute(
         "INSERT OR REPLACE INTO debate_runs"
-        "(id, symbol, as_of, context_id, status, verdict, created_at)"
-        " VALUES(?,?,?,?,?,?,?)",
+        "(id, symbol, as_of, context_id, status, verdict, datapack, created_at)"
+        " VALUES(?,?,?,?,?,?,?,?)",
         (run_id, symbol, str(ctx.get("analysis_as_of") or ""), context_id,
-         status, verdict, created),
+         status, verdict, str(datapack or ""), created),
     )
     for turn in audit.get("turns", []):
         db.execute(

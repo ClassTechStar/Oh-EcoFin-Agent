@@ -38,5 +38,7 @@ cd android && ./gradlew assembleDebug
 
 ## 降级预案（预先与助教对齐口径）
 
+一键构建：`bash mobile/build_apk.sh`（需 Android Studio/JDK 17；`--release` 出 release 包）。
+
 若 Capacitor 打包受阻（SDK/签名环境问题），移动端演示退化为：
 **手机浏览器扫码直连局域网地址**——演示形态不变（同一前端三端可达的移动形态）。

@@ -14,8 +14,42 @@ const profile = ref<Record<string, any>>({})
 const versions = ref<Record<string, any[]>>({})
 const loading = ref(true)
 const uploading = ref(false)
+const seeding = ref(false)
 const loadingId = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
+
+/** 一键示例数据集：前端内联生成演示 CSV（A/B 实验口径），走既有上传通道。 */
+const SAMPLE_CSV = [
+  'date,group,visitors,orders,revenue',
+  '2026-09-01,A,1200,86,5120',
+  '2026-09-01,B,1180,97,5560',
+  '2026-09-02,A,1240,92,5380',
+  '2026-09-02,B,1265,104,6010',
+  '2026-09-03,A,1188,79,4890',
+  '2026-09-03,B,1210,88,5320',
+  '2026-09-04,A,1302,101,6110',
+  '2026-09-04,B,1340,112,6480',
+  '2026-09-05,A,1265,94,5730',
+  '2026-09-05,B,1290,99,5870',
+  '2026-09-06,A,1350,108,6340',
+  '2026-09-06,B,1388,121,7010',
+  '2026-09-07,A,1288,90,5410',
+  '2026-09-07,B,1310,102,6120',
+].join('\n')
+
+async function seedSample() {
+  seeding.value = true
+  try {
+    const file = new File([SAMPLE_CSV], 'demo_ab_test.csv', { type: 'text/csv' })
+    const result = await uploadDataset(file)
+    show(`示例数据集已就绪：${result.name}（${result.rows} 行）——去「数据分析」页跑 A-B 测试`)
+    await refresh()
+  } catch (e: any) {
+    show(e.message || '示例导入失败', 'error')
+  } finally {
+    seeding.value = false
+  }
+}
 
 async function refresh() {
   loading.value = true
@@ -88,7 +122,14 @@ onMounted(refresh)
 
     <div v-if="loading && !datasets.length" class="skeleton" style="height: 160px" />
     <MdEmptyState v-else-if="!datasets.length" icon="dashboard" title="还没有数据集"
-                  description="上传 CSV/Excel/Parquet 后即可在「数据分析」页做分析与报告" />
+                  description="上传 CSV/Excel/Parquet，或先导入内置示例（转化漏斗/A-B 测试演示数据）后即可在「数据分析」页做分析与报告">
+      <MdButton variant="tonal" icon="spark" small :loading="seeding" @click="seedSample">
+        一键导入示例数据集
+      </MdButton>
+      <MdButton variant="outlined" icon="plus" small @click="fileInput?.click()">
+        上传本地文件
+      </MdButton>
+    </MdEmptyState>
 
     <div v-else class="dataset-list">
       <MdCard v-for="item in datasets" :key="item.dataset_id" variant="elevated" class="dataset-item">

@@ -117,6 +117,10 @@ class AgentConfig(BaseSettings):
     keep_recent_messages: int = 12
     tool_result_token_budget: int = 2000
     total_tool_token_budget: int = 12000
+    #: plan 事件（planning 轮后输出 1-3 步计划，前端时间线展示）
+    plan_enabled: bool = True
+    #: self_critique（终局前 economy 自批评，落 agent_runs 并注入下次同类任务）
+    self_critique_enabled: bool = True
 
 
 class AuditConfig(BaseSettings):
@@ -185,7 +189,8 @@ class Settings(BaseSettings):
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
 
     db_path: str = str(PROJECT_ROOT / "data" / "finagent.db")
-    cassette_dir: str = str(PROJECT_ROOT / "data" / "cassettes_frozen")
+    # 冻结卡带目录与 tests/conftest.py / scripts/freeze_demo.py 同源（随仓库分发）
+    cassette_dir: str = str(PROJECT_ROOT / "tests" / "cassettes_frozen")
     log_level: str = "INFO"
 
 

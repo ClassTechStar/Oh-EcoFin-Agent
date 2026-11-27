@@ -5,7 +5,7 @@
  *  - 顶栏 56px：品牌 + 快照新鲜度徽章 + 主题切换（MD3 top app bar 交互）
  *  - 无路由依赖：mode 切换 + Page 档位过渡（CyreneCompass mode-surface 模式）
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watchEffect } from 'vue'
 import { api } from '../sse'
 import { useTheme } from '../theme/theme'
 import MdIcon from '../components/MdIcon.vue'
@@ -24,15 +24,30 @@ const NAV = [
   { id: 'analysis', label: '数据分析', icon: 'analysis' },
   { id: 'data', label: '数据', icon: 'data' },
   { id: 'reports', label: '报告', icon: 'report' },
-  { id: 'audit', label: '审计', icon: 'audit' },
   { id: 'trading', label: '交易看板', icon: 'trading' },
   { id: 'advisor', label: '投顾合规', icon: 'shield' },
-  { id: 'cost', label: '成本看板', icon: 'dashboard' },
-  { id: 'decisions', label: '决策记忆', icon: 'history' },
   { id: 'settings', label: '设置', icon: 'settings' },
 ]
+// 高级分组（审计/成本/决策：工程视角页，默认收起降噪——普通用户首屏更清爽）
+const NAV_ADVANCED = [
+  { id: 'audit', label: '审计', icon: 'audit' },
+  { id: 'cost', label: '成本看板', icon: 'dashboard' },
+  { id: 'decisions', label: '决策记忆', icon: 'history' },
+]
+const advOpen = ref(false)
 
-const activeLabel = computed(() => NAV.find(n => n.id === props.active)?.label ?? '')
+// 长辈模式：字号 ×1.4（SettingsView 同款开关写 localStorage，此处引导 + 兜底恢复）
+const elderMode = ref(localStorage.getItem('elder_mode') === '1')
+watchEffect(() => {
+  document.documentElement.classList.toggle('elder-mode', elderMode.value)
+})
+function toggleElder() {
+  elderMode.value = !elderMode.value
+  localStorage.setItem('elder_mode', elderMode.value ? '1' : '0')
+}
+
+const activeLabel = computed(() =>
+  [...NAV, ...NAV_ADVANCED].find(n => n.id === props.active)?.label ?? '')
 
 const freshnessMeta = computed(() => {
   const f = health.value?.snapshot?.freshness
@@ -75,7 +90,7 @@ onMounted(async () => {
     </header>
 
     <div class="shell__body">
-      <!-- 桌面侧栏（dock 模式） -->
+      <!-- 桌面侧栏（dock 模式）：主功能 + 高级分组（默认收起） -->
       <nav :class="['rail', { 'rail--expanded': railOpen }]" aria-label="主导航">
         <button v-for="item in NAV" :key="item.id"
                 :class="['rail__item', { 'rail__item--active': active === item.id }]"
@@ -87,6 +102,24 @@ onMounted(async () => {
           <span v-if="railOpen" class="rail__label">{{ item.label }}</span>
           <span v-else class="rail__fallback">{{ item.label }}</span>
         </button>
+        <button class="rail__adv-toggle" :aria-expanded="advOpen" aria-label="高级功能分组"
+                @click="advOpen = !advOpen">
+          <span class="rail__indicator"><MdIcon :name="advOpen ? 'minus' : 'plus'" :size="18" /></span>
+          <span v-if="railOpen" class="rail__label rail__label--muted">{{ advOpen ? '收起高级' : '高级功能' }}</span>
+          <span v-else class="rail__fallback rail__fallback--muted">高级</span>
+        </button>
+        <template v-if="advOpen">
+          <button v-for="item in NAV_ADVANCED" :key="item.id"
+                  :class="['rail__item', 'rail__item--adv', { 'rail__item--active': active === item.id }]"
+                  :aria-current="active === item.id ? 'page' : undefined"
+                  @click="emit('navigate', item.id)">
+            <span class="rail__indicator">
+              <MdIcon :name="item.icon" :size="22" />
+            </span>
+            <span v-if="railOpen" class="rail__label rail__label--muted">{{ item.label }}</span>
+            <span v-else class="rail__fallback rail__fallback--muted">{{ item.label }}</span>
+          </button>
+        </template>
         <button class="rail__expand desktop-only" :aria-label="railOpen ? '收起导航' : '展开导航'"
                 @click="railOpen = !railOpen">
           <MdIcon :name="railOpen ? 'close' : 'plus'" :size="18" />
@@ -107,7 +140,7 @@ onMounted(async () => {
       </main>
     </div>
 
-    <!-- 移动端底部导航（MD3 NavigationBar） -->
+    <!-- 移动端底部导航（MD3 NavigationBar）：主功能 + 高级折叠 -->
     <nav class="navbar" aria-label="底部导航">
       <button v-for="item in NAV" :key="item.id"
               :class="['navbar__item', { 'navbar__item--active': active === item.id }]"
@@ -115,6 +148,21 @@ onMounted(async () => {
               @click="emit('navigate', item.id)">
         <span class="navbar__indicator"><MdIcon :name="item.icon" :size="22" /></span>
         <span class="navbar__label">{{ item.label }}</span>
+      </button>
+      <template v-if="advOpen">
+        <button v-for="item in NAV_ADVANCED" :key="item.id"
+                :class="['navbar__item', 'navbar__item--adv', { 'navbar__item--active': active === item.id }]"
+                :aria-current="active === item.id ? 'page' : undefined"
+                @click="emit('navigate', item.id)">
+          <span class="navbar__indicator"><MdIcon :name="item.icon" :size="22" /></span>
+          <span class="navbar__label">{{ item.label }}</span>
+        </button>
+      </template>
+      <button :class="['navbar__item', 'navbar__item--adv', { 'navbar__item--active': advOpen }]"
+              :aria-expanded="advOpen" aria-label="高级功能"
+              @click="advOpen = !advOpen">
+        <span class="navbar__indicator"><MdIcon :name="advOpen ? 'minus' : 'plus'" :size="22" /></span>
+        <span class="navbar__label">{{ advOpen ? '收起' : '高级' }}</span>
       </button>
     </nav>
 
@@ -193,8 +241,21 @@ onMounted(async () => {
   transition: background-color var(--motion-fade-in), width var(--motion-settle);
 }
 .rail__label { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.rail__label--muted { color: var(--text-muted); font-weight: 500; }
 .rail__fallback { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.rail__fallback--muted { color: var(--text-muted); }
+.rail--expanded .rail__fallback--muted {
+  position: static; width: auto; height: auto; clip: none; font-size: 13px;
+}
 .rail__item { position: relative; }
+.rail__adv-toggle {
+  display: flex; align-items: center; gap: 4px; margin-top: 2px;
+  width: 44px; height: 44px; padding: 0;
+  border-radius: var(--md-radius-full); color: var(--text-muted);
+  transition: background-color var(--motion-fade-in);
+}
+.rail__adv-toggle:hover { background: var(--bg-hover); }
+.rail--expanded .rail__adv-toggle { width: 100%; padding: 0 12px; }
 .rail__expand {
   margin-top: auto; width: 44px; height: 44px;
   display: grid; place-items: center;

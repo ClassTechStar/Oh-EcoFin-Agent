@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import datetime, timedelta
 
 import pytest
 
 from backend.data.calendar import CST, TradeCalendar, now_cst
+from backend.data.precompute import compute_indicators
 from backend.data.ratelimit import TokenBucket
 from backend.data.snapshot import SnapshotService
-from backend.data.precompute import compute_indicators
 
 
 def make_calendar(tmp_path, dates):

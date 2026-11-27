@@ -36,6 +36,10 @@ interface ChatMessage {
   meta?: string
   state?: string
   budget?: any
+  plan?: string[]
+  selfCritique?: string
+  runId?: string
+  feedback?: 'up' | 'down'
 }
 
 const STATE_LABEL: Record<string, string> = {
@@ -118,11 +122,20 @@ function handleEvent(stream: ChatMessage, event: string, payload: any) {
     case 'run_state':
       stream.state = payload.state
       break
+    case 'plan':
+      // planning 阶段的 1-3 步计划：时间线顶部展示"智能体打算做什么"
+      stream.plan = (payload.steps || []).map((s: any) => String(s))
+      break
+    case 'note':
+      // 过程注记（如终局 self_critique）
+      if (payload.kind === 'self_critique') stream.selfCritique = payload.text
+      break
     case 'budget':
       stream.budget = payload
       break
     case 'done': {
       stream.state = payload.state
+      stream.runId = payload.run_id
       const stop = payload.stop_reason && payload.stop_reason !== 'answer'
         ? ` · 停止 ${payload.stop_reason}` : ''
       stream.meta = `轮次 ${payload.rounds} · 工具 ${payload.tool_stats?.calls ?? 0} 次 · 成本 ¥${payload.cost_breakdown?.total_cny ?? 0}${stop}`
@@ -193,6 +206,63 @@ async function answerAsk(qid: string, choice: string) {
     console.warn('resume failed', e)
   }
 }
+
+// ---------- L1 反馈回流（done 后一枚 👍/👎，可选文字） ----------
+const feedbackMsg = ref<ChatMessage | null>(null)
+const feedbackComment = ref('')
+
+async function submitFeedback(m: ChatMessage, rating: 'up' | 'down') {
+  m.feedback = rating
+  if (rating === 'up') {
+    feedbackMsg.value = null
+    try { await api.sendFeedback({ session_id: sessionId.value, run_id: m.runId, rating }) } catch { /* 静默 */ }
+    return
+  }
+  // 👎 时展开文字反馈框（可跳过）
+  feedbackMsg.value = m
+}
+
+async function sendFeedbackComment() {
+  const m = feedbackMsg.value
+  if (!m) return
+  try {
+    await api.sendFeedback({
+      session_id: sessionId.value, run_id: m.runId, rating: 'down',
+      comment: feedbackComment.value.trim() || undefined,
+    })
+  } catch { /* 静默 */ }
+  feedbackMsg.value = null
+  feedbackComment.value = ''
+}
+
+function skipFeedbackComment() {
+  feedbackMsg.value = null
+  feedbackComment.value = ''
+}
+
+// ---------- 语音输入（Web Speech API；不支持时按钮隐藏） ----------
+const voiceSupported = typeof window !== 'undefined' &&
+  !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
+const listening = ref(false)
+let recognition: any = null
+
+function toggleVoice() {
+  if (listening.value) { recognition?.stop(); return }
+  const Ctor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+  if (!Ctor) return
+  recognition = new Ctor()
+  recognition.lang = 'zh-CN'
+  recognition.interimResults = false
+  recognition.continuous = false
+  recognition.onresult = (ev: any) => {
+    const said = Array.from(ev.results).map((r: any) => r[0].transcript).join(' ')
+    input.value = (input.value ? input.value + ' ' : '') + said.trim()
+  }
+  recognition.onend = () => { listening.value = false }
+  recognition.onerror = () => { listening.value = false }
+  listening.value = true
+  recognition.start()
+}
 </script>
 
 <template>
@@ -217,6 +287,13 @@ async function answerAsk(qid: string, choice: string) {
             <span v-if="m.budget?.action === 'compressed'" class="muted">· 上下文已压缩</span>
             <span v-else-if="m.budget?.action === 'tool_budget'" class="muted">· 工具结果预算</span>
           </div>
+          <!-- plan 事件：智能体的 1-3 步执行计划（自主性可视化） -->
+          <div v-if="m.plan?.length" class="plan-card md-card--outlined">
+            <div class="plan-card__head"><MdIcon name="trend-up" :size="14" /> 执行计划</div>
+            <ol class="plan-card__steps">
+              <li v-for="(step, si) in m.plan" :key="si">{{ step }}</li>
+            </ol>
+          </div>
           <details v-if="m.thinking" class="thinking md-card--outlined" :open="true">
             <summary><MdIcon name="spark" :size="14" /> 思考过程（{{ m.thinking.length }} 字）</summary>
             <div class="raw">{{ m.thinking }}</div>
@@ -227,7 +304,27 @@ async function answerAsk(qid: string, choice: string) {
           <ChartRenderer v-for="c in m.charts" :key="c.id" :chart="c" />
           <ReportView v-if="m.report" :report="m.report" />
           <div v-if="m.text" class="bubble-assistant md-card--outlined">{{ m.text }}</div>
+          <details v-if="m.selfCritique" class="critique md-card--outlined">
+            <summary><MdIcon name="spark" :size="13" /> 过程反思（self_critique）</summary>
+            <div class="raw">{{ m.selfCritique }}</div>
+          </details>
           <div v-if="m.meta" class="msg-meta num">{{ m.meta }}</div>
+          <!-- L1 反馈回流：done 后一枚 👍/👎 -->
+          <div v-if="m.meta && !running" class="feedback-row">
+            <template v-if="!m.feedback">
+              <button class="feedback-btn" aria-label="有帮助" @click="submitFeedback(m, 'up')">👍</button>
+              <button class="feedback-btn" aria-label="没帮助" @click="submitFeedback(m, 'down')">👎</button>
+            </template>
+            <span v-else class="feedback-done muted">{{ m.feedback === 'up' ? '已反馈：有帮助' : '已反馈：没帮助' }}</span>
+          </div>
+          <div v-if="feedbackMsg === m" class="feedback-comment md-card--outlined">
+            <MdTextField v-model="feedbackComment" multiline :rows="2"
+                         placeholder="哪里没帮到？（可选，直接跳过也可以）" />
+            <div class="feedback-comment__actions">
+              <MdButton variant="tonal" small @click="sendFeedbackComment">提交反馈</MdButton>
+              <MdButton variant="text" small @click="skipFeedbackComment">跳过</MdButton>
+            </div>
+          </div>
         </div>
       </template>
 
@@ -246,6 +343,12 @@ async function answerAsk(qid: string, choice: string) {
                        placeholder="输入问题，如：600519 值得买吗？/ 帮我做风险测评 / 000001 双均线回测"
                        @enter="send" />
         </div>
+        <!-- 语音输入（Web Speech API，Chromium 三端可用；不支持时隐藏） -->
+        <button v-if="voiceSupported" class="voice-btn" :class="{ 'voice-btn--listening': listening }"
+                :disabled="running" :aria-label="listening ? '停止语音' : '语音输入'"
+                @click="toggleVoice">
+          <MdIcon name="mic" :size="20" />
+        </button>
         <button class="send-btn" :class="{ 'send-btn--running': running }"
                 :disabled="running || !input.trim()" aria-label="发送" @click="send">
           <MdProgress v-if="running" type="ring" :size="20" />
@@ -294,6 +397,59 @@ async function answerAsk(qid: string, choice: string) {
   white-space: pre-wrap; max-height: 200px; overflow: auto;
   border-top: 1px dashed var(--border-subtle);
   font-family: var(--font-mono);
+}
+
+/* plan 事件：执行计划卡（时间线顶部，1-3 步） */
+.plan-card { border-radius: var(--md-radius-m); padding: 8px 12px; }
+.plan-card__head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--text-secondary); margin-bottom: 4px;
+}
+.plan-card__steps {
+  margin: 0; padding-left: 20px; font-size: 13px; color: var(--text-muted);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.critique { border-radius: var(--md-radius-m); overflow: hidden; }
+.critique summary {
+  cursor: pointer; padding: 6px 12px; font-size: 12px; color: var(--text-muted);
+  display: flex; align-items: center; gap: 6px; list-style: none;
+}
+.critique summary::-webkit-details-marker { display: none; }
+.critique .raw {
+  padding: 6px 12px; font-size: 12px; color: var(--text-muted);
+  white-space: pre-wrap; border-top: 1px dashed var(--border-subtle);
+}
+
+/* L1 反馈回流 + 语音输入 */
+.feedback-row { display: flex; gap: 6px; align-items: center; margin-top: 2px; }
+.feedback-btn {
+  width: 30px; height: 30px; border-radius: var(--md-radius-full);
+  display: grid; place-items: center; font-size: 14px;
+  color: var(--text-muted); transition: background-color var(--motion-fade-in);
+}
+.feedback-btn:hover { background: var(--bg-hover); }
+.feedback-done { font-size: 12px; }
+.feedback-comment { margin-top: 6px; padding: 10px 12px; border-radius: var(--md-radius-m); }
+.feedback-comment__actions { display: flex; gap: 8px; margin-top: 6px; }
+.voice-btn {
+  width: 44px; height: 44px; flex: 0 0 44px;
+  display: grid; place-items: center;
+  border-radius: var(--md-radius-full);
+  background: var(--md-surface-variant, var(--bg-hover));
+  color: var(--text-secondary);
+  transition: background-color var(--motion-fade-in), color var(--motion-fade-in);
+}
+.voice-btn:hover:not(:disabled) { background: var(--bg-hover); }
+.voice-btn--listening {
+  color: var(--md-primary);
+  animation: voice-pulse 1.2s ease-in-out infinite;
+}
+@keyframes voice-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--md-primary) 35%, transparent); }
+  50% { box-shadow: 0 0 0 8px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-btn--listening { animation: none; }
 }
 
 .composer-zone { flex: 0 0 auto; padding: var(--space-2) var(--space-4) var(--space-1); }

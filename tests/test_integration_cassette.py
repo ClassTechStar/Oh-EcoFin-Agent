@@ -7,18 +7,18 @@ import json
 import zlib
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 from backend.data.calendar import TradeCalendar
+from backend.data.precompute import PrecomputeService
+from backend.data.ratelimit import TokenBucket
 from backend.data.snapshot import SnapshotService
 from backend.tools.market import MarketTools
 from backend.tools.research import ResearchTools
-from backend.data.precompute import PrecomputeService
-from backend.data.ratelimit import TokenBucket
 from tests.helpers import synthetic_ohlcv
 
 CASSETTES = Path(__file__).resolve().parent / "cassettes_frozen"
+HAS_FROZEN = (CASSETTES / "snapshot.json").exists()
 
 
 @pytest.fixture(scope="module")
@@ -132,3 +132,27 @@ async def test_cassette_snapshot_stale_semantics(wired):
     _, snap, _, _ = wired
     assert snap.freshness()["is_stale"] is True
     assert snap._source == "cassette"
+
+
+@pytest.mark.skipif(not HAS_FROZEN, reason="tests/cassettes_frozen 未冻结（先跑 scripts/freeze_demo.py）")
+async def test_frozen_cassette_replay():
+    """真实冻结卡带（随仓库分发）走完整工具链——复现 freeze_demo.py 的冻结回放语义。
+
+    CI 与本地默认零密钥跑通合成卡带用例；冻结卡带就位后本用例验证真实链路忠实度。
+    """
+
+    settings = make_settings(CASSETTES)
+    cal = TradeCalendar(cache_path=CASSETTES / "trade_dates.json")
+    snap = SnapshotService(settings, cal)
+    assert await snap.refresh_once() is True
+    market = MarketTools(snapshot=snap, bucket=TokenBucket(100, 10),
+                         kline_cache_ttl=3600, cassette_dir=str(CASSETTES),
+                         demo_mode=True)
+    pre = PrecomputeService()
+    research = ResearchTools(market, None, pre)
+    quote = await market.get_quote(["600519"])
+    assert quote["ok"] is True and quote["quotes"], "冻结快照应含演示标的 600519"
+    kline = await market.get_kline("600519", 120)
+    assert kline["ok"] is True and len(kline["bars"]) == 120
+    fin = await research.get_financial("600519")
+    assert fin["ok"] is True

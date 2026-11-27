@@ -86,6 +86,33 @@ class ResearchReport(BaseModel):
 NUM_RE = re.compile(r"\[(\d+)\]")
 
 
+class RiskReview(BaseModel):
+    """风控复核 JSON Schema（submit_risk_review 入参，与 submit_research_report 同款纪律）。
+
+    supported/unsupported 为 DataPack 编号（int）；风控角色输出从"正则提 JSON"
+    升级为 Function Calling 强约束，解析失败率趋零。
+    """
+    supported: list[int] = Field(default_factory=list,
+                                 description="有数据支撑的论据编号")
+    unsupported: list[int] = Field(default_factory=list,
+                                   description="无数据支撑、禁止作为结论依据的编号")
+    concerns: list[str] = Field(default_factory=list,
+                                description="具体风险点（相关性≠因果/时效过期等）")
+
+    @field_validator("supported", "unsupported")
+    @classmethod
+    def _positive(cls, v: list[int]) -> list[int]:
+        if any(n < 1 for n in v):
+            raise ValueError("编号必须从 1 开始（DataPack [n] 协议）")
+        return v
+
+
+def risk_review_payload(review: RiskReview) -> dict:
+    """RiskReview → 辩论风控段 dict（与原正则解析的键完全兼容）。"""
+    return {"supported": review.supported, "unsupported": review.unsupported,
+            "concerns": list(review.concerns)}
+
+
 def cross_check_citations(text: str, citations: list[Citation]) -> list[str]:
     """正文 [n] 与 citations 编号 1:1 交叉校验：返回问题列表（空 = 通过）。"""
     in_text = {int(m) for m in NUM_RE.findall(text or "")}
@@ -223,3 +250,19 @@ class ResearchTools:
         if not report.risk_disclosure or len(report.risk_disclosure) < 40:
             return {"ok": False, "error": "缺少合规免责声明", "hint": "risk_disclosure ≥40 字"}
         return {"ok": True, "report": report.model_dump()}
+
+    # ---------- submit_risk_review ----------
+
+    async def submit_risk_review(self, supported: list[int] | None = None,
+                                 unsupported: list[int] | None = None,
+                                 concerns: list[str] | None = None, **_) -> dict:
+        """辩论风控复核的结构化提交（Function Calling 强约束 JSON）。"""
+        try:
+            review = RiskReview(
+                supported=list(supported or []),
+                unsupported=list(unsupported or []),
+                concerns=list(concerns or []))
+        except Exception as e:
+            return {"ok": False, "error": f"风控 Schema 校验失败: {e}",
+                    "hint": "编号必须是 DataPack 中的 [n]（从 1 开始）"}
+        return {"ok": True, "risk_review": risk_review_payload(review)}

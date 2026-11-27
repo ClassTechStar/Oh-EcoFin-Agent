@@ -13,14 +13,29 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+#: 既有库的增量列迁移（新库走 DDL 全量建表；旧库 ALTER 补列）
+#: 表/列名均为本文件内常量，非用户输入，允许 f-string 拼接。
+_COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
+    "agent_runs": {"self_critique": "TEXT"},
+    "debate_runs": {"datapack": "TEXT"},
+}
+
 DDL = """
 PRAGMA journal_mode=WAL;
-
 CREATE TABLE IF NOT EXISTS sessions(
   id TEXT PRIMARY KEY,
   title TEXT,
   created_at TEXT,
   status TEXT
+);
+CREATE TABLE IF NOT EXISTS feedback(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT,
+  run_id TEXT,
+  rating TEXT,
+  comment TEXT,
+  prompt_version TEXT,
+  created_at TEXT
 );
 CREATE TABLE IF NOT EXISTS messages(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,6 +106,7 @@ CREATE TABLE IF NOT EXISTS debate_runs(
   context_id TEXT,
   status TEXT,
   verdict TEXT,
+  datapack TEXT,
   created_at TEXT
 );
 CREATE TABLE IF NOT EXISTS debate_sections(
@@ -281,6 +297,7 @@ CREATE TABLE IF NOT EXISTS agent_runs(
   tokens_out INTEGER,
   cost_cents INTEGER,
   summary TEXT,
+  self_critique TEXT,
   started_at TEXT,
   ended_at TEXT
 );
@@ -368,7 +385,18 @@ class Database:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
-        self._conn(path).executescript(DDL)
+        conn = self._conn(path)
+        conn.executescript(DDL)
+        self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """轻量列迁移：已有库补齐新增列（幂等，缺列才 ALTER）。"""
+        for table, columns in _COLUMN_MIGRATIONS.items():
+            existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for col, typ in columns.items():
+                if col not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        conn.commit()
 
     def _conn(self, path: str | Path | None = None) -> sqlite3.Connection:
         target = str(path or self.path)

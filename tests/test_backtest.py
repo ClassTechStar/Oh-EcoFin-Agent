@@ -5,10 +5,18 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from backend.quant.backtest import (COMMISSION_RATE, DualMAStrategy, INIT_CASH,
-                                    STAMP_DUTY, build_cerebro, grid_search,
-                                    limit_pct_for, metrics_from_returns,
-                                    run_backtest, validate_columns)
+from backend.quant.backtest import (
+    COMMISSION_RATE,
+    INIT_CASH,
+    STAMP_DUTY,
+    DualMAStrategy,
+    build_cerebro,
+    grid_search,
+    limit_pct_for,
+    metrics_from_returns,
+    run_backtest,
+    validate_columns,
+)
 
 
 def test_column_validation_renames_required():
@@ -151,7 +159,6 @@ def test_limit_hit_skips_orders():
 
 
 def test_metrics_from_returns_math():
-    import numpy as np
 
     rets = pd.Series([0.01, -0.02, 0.03, 0.01])
     m = metrics_from_returns(rets, [100.0, -50.0, 30.0])

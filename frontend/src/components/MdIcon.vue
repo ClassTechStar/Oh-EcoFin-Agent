@@ -137,6 +137,11 @@ const props = defineProps<{ name: string; size?: number | string }>()
       <path d="M5 7h14M10 4.5h4M6.5 7l.8 12a1.6 1.6 0 0 0 1.6 1.5h6.2a1.6 1.6 0 0 0 1.6-1.5L17.5 7"
             stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
     </template>
+    <template v-else-if="name === 'mic'">
+      <rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.8" />
+      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"
+            stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+    </template>
     <template v-else>
       <circle cx="12" cy="12" r="7" stroke="currentColor" stroke-width="1.8" />
     </template>

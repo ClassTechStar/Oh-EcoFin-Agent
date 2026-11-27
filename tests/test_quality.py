@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from backend.data.quality import (check_limit_hit, check_suspended,
-                                  classify_board, freshness,
-                                  limit_threshold, validate_snapshot_df)
+from backend.data.quality import (
+    check_limit_hit,
+    check_suspended,
+    classify_board,
+    freshness,
+    limit_threshold,
+    validate_snapshot_df,
+)
 
 
 def test_suspension_volume_zero():

@@ -1,6 +1,7 @@
 # 哦经金智能体 · Oh EcoFin Agent
 
 > **教学演示用途：所有输出不构成任何投资建议，不提供任何形式的投资建议服务。**
+> **实盘能力默认关闭**：实盘券商通道（QMT / HTTP 网关）出厂即 `LIVE_ENABLED=0`，本仓库定位为课程教学演示，请勿用于真实资金交易。
 > 全栈国产化 A 股投研智能体：国产模型（GLM-5.3-Flash / DeepSeek）+ 国产数据源（AKShare/东财）+ A 股 + 国产新闻源。
 > 平台：Windows 桌面端（pywebview）+ Android（Capacitor）+ 浏览器，**一套前端三端可达**。
 
@@ -127,8 +128,8 @@ copy .env.example .env
 .\.venv\Scripts\python.exe scripts\smoke_e2e.py
 ```
 
-**答辩离线兜底（DEMO_MODE）**：提前一天 `python scripts/freeze_demo.py` 预抓冻结卡带，
-现场 `DEMO_MODE=1` 启动即断网可跑。
+**答辩离线兜底（DEMO_MODE）**：仓库已内置 `tests/cassettes_frozen/` 冻结卡带（10 只演示标的的快照/K线/财务），
+`DEMO_MODE=1` 启动即断网可跑；如需全市场快照演示，提前一天 `python scripts/freeze_demo.py --full-snapshot` 重新冻结。
 
 ## 局域网联动（手机演示）
 
@@ -156,10 +157,10 @@ backend/    FastAPI + 引擎(gateway/react/debate/askuser/compactor) + 工具 + 
 frontend/   Vite + Vue3 + lightweight-charts + ECharts（按需注册，首屏 <300KB gzip）
 desktop/    pywebview 壳 + PyInstaller onedir spec
 mobile/     Capacitor 工程 + 明文 HTTP 白名单模板
-eval/       tasks.json(20 标准任务) + run_ablation.py(A–E 消融) + metrics.py
-tests/      单测 + 卡带回放集成（CI 零密钥）
+eval/       tasks.json(20 标准任务) + run_ablation.py(A–E 消融) + metrics.py + results/(消融执行产物)
+tests/      单测 + 卡带回放集成（CI 零密钥）+ cassettes_frozen/（冻结卡带，随仓库分发）
 scripts/    freeze_demo / bench_cold / bench_e2e / export_cost / 未来函数扫描
-docs/       开发方案 + 报告草稿 + 成本清单导出
+docs/       bench/(性能基准留档) + cost_report/（成本清单导出，export_cost.py 生成）
 ```
 
 ## 关键红线（验收口径）

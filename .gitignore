@@ -17,7 +17,7 @@ venv/
 *.db-wal
 *.db-shm
 data/cache/
-data/cassettes_frozen/
+data/cassettes_frozen/  # 旧路径（历史产物）；冻结卡带现统一在 tests/cassettes_frozen（随仓库分发）
 data/catalog/
 data/datasets/
 data/workspaces/

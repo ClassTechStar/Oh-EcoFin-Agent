@@ -9,7 +9,6 @@ import pytest
 from backend.security.logmask import mask_result_for_storage, mask_text
 from backend.security.tokens import generate_token, verify_token
 
-
 # ---------- 日志脱敏 ----------
 
 GOLDEN_CASES = [

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app import AppContext, create_app, _extract_symbol
+from backend.app import AppContext, _extract_symbol, create_app
 from backend.config import Settings
 
 
@@ -120,7 +119,7 @@ def test_resume_without_pending_404(api):
 def test_chat_endpoint_runs_mock_engine(api):
     """POST /api/chat → SSE 全链（Mock 引擎注入）。"""
     client, ctx = api
-    from backend.engine.gateway import LLMResult, ToolCall
+    from backend.engine.gateway import LLMResult
 
     class ScriptGW:
         async def chat(self, messages, tools=None, stream_cb=None, **kw):
@@ -200,3 +199,30 @@ def test_lan_token_403(tmp_path, monkeypatch):
     assert verify_token("secret-token", ctx.lan_token) is True
     # LAN 模式开启且缺省生成随机 token
     assert ctx.lan_token != ""
+
+
+def test_feedback_flow_and_version_buckets(api):
+    """L1 反馈回流：👍/👎 入库 + prompt_version 服务端盖章 + 汇总分桶。"""
+    client, _ = api
+    r = client.post("/api/sessions")
+    sid = r.json()["id"]
+    r = client.post("/api/feedback", json={
+        "session_id": sid, "rating": "down", "comment": "K线没取到"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    r = client.post("/api/feedback", json={"session_id": sid, "rating": "up"})
+    assert r.status_code == 200
+    # 非法 rating 422
+    r = client.post("/api/feedback", json={"session_id": sid, "rating": "mid"})
+    assert r.status_code == 422
+    summary = client.get("/api/feedback/summary").json()
+    buckets = {b["rating"]: b["c"] for b in summary["buckets"]
+               if b["prompt_version"]}
+    assert buckets.get("down") == 1 and buckets.get("up") == 1
+    assert any("K线没取到" in (c.get("comment") or "") for c in summary["recent"])
+
+
+def test_debate_resume_missing_run_404(api):
+    """辩论 checkpoint 续跑：run_id 不存在 → 404（fail-closed）。"""
+    client, _ = api
+    r = client.post("/api/debate/not-exist/resume", json={})
+    assert r.status_code == 404

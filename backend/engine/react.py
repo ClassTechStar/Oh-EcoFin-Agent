@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -71,6 +72,39 @@ class ChatTask:
     history: list[dict] = field(default_factory=list)   # [{role, content}]
     history_block: str = ""                             # 决策记忆注入块
     mode: str = "chat"                                  # chat | debate | advisor
+    last_self_critique: str = ""                        # 上次过程教训注入（L2 进化）
+
+
+#: plan 事件生成（economy，1 次调用，≤3 步 ≤100 token）
+PLAN_PROMPT = """为回答用户问题，列出你将执行的 1-3 个步骤。
+只输出 JSON 数组（每步 ≤20 字中文），不要多余文字。例：["获取最新行情快照", "对比近120日走势"]
+
+用户问题：{q}"""
+
+#: self_critique（终局前 economy 自批评，≤200 token；对「过程」的反思）
+SELF_CRITIQUE_PROMPT = """回顾本次任务调用的工具与最终回答，用 1-2 句话（≤80 字）回答：
+哪些工具调用是浪费/重复的？哪个关键数据没取到？下次同类任务应如何改进？
+只输出改进结论本身，不要客套。
+
+本次过程：工具调用 {calls} 次（失败 {errors} 次，被拦截 {blocked} 次，缓存命中 {cached} 次）。
+最终回答摘要：{answer}"""
+
+
+def _parse_plan_steps(text: str, max_steps: int = 3) -> list[str]:
+    """解析 plan JSON 数组；失败回退按行拆分。超长步截断，保底空列表。"""
+    steps: list[str] = []
+    m = re.search(r"\[[\s\S]*?\]", text or "")
+    if m:
+        try:
+            data = json.loads(m.group(0))
+            if isinstance(data, list):
+                steps = [str(s) for s in data if str(s).strip()]
+        except json.JSONDecodeError:
+            pass
+    if not steps:
+        steps = [line.strip(" -*0123456789.") for line in (text or "").splitlines()
+                 if line.strip(" -*0123456789.")]
+    return [s[:40] for s in steps[:max_steps] if s]
 
 
 def _truncate_tool_text(text: str, token_limit: int) -> str:
@@ -85,13 +119,17 @@ class ReActEngine:
                  ask_manager: AskUserManager, *,
                  budget: RunBudget | None = None,
                  run_store: RunStore | None = None,
-                 tool_store: ToolCallStore | None = None):
+                 tool_store: ToolCallStore | None = None,
+                 plan_enabled: bool = True,
+                 self_critique_enabled: bool = True):
         self.gw = gateway
         self.registry = registry
         self.ask_manager = ask_manager
         self.budget = budget or RunBudget(max_rounds=MAX_ROUNDS)
         self.run_store = run_store
         self.tool_store = tool_store
+        self.plan_enabled = plan_enabled
+        self.self_critique_enabled = self_critique_enabled
 
     # ---------- 主循环 ----------
 
@@ -104,6 +142,10 @@ class ReActEngine:
             except Exception:
                 logger.exception("agent_runs 起始记录失败")
         self._emit_state(run, stream, previous=None)
+
+        # plan 事件：planning 阶段即输出"智能体打算做什么"（自主性可视化，答辩演示载体）
+        if self.plan_enabled:
+            await self._emit_plan(task, stream, run)
 
         messages = self._assemble(task)
         usage = {"tokens_in": 0, "tokens_out": 0, "cost_cents": 0, "calls": 0}
@@ -249,10 +291,57 @@ class ReActEngine:
                 context_tokens=last_context_tokens)
         finally:
             if self.run_store is not None:
+                critique = ""
+                # L2 自我批评：仅自然作答（stop_reason=answer）的 run 产出过程教训
+                if self.self_critique_enabled and run.stop_reason == "answer":
+                    critique = await self._self_critique(task, text_answer,
+                                                         tool_stats, run, stream)
                 try:
-                    self.run_store.finish(run, summary=run.summary)
+                    self.run_store.finish(run, summary=run.summary,
+                                          self_critique=critique)
                 except Exception:
                     logger.exception("agent_runs 结束记录失败")
+
+    # ---------- L2 自我批评 / plan 可视化 ----------
+
+    async def _self_critique(self, task: ChatTask, final_text: str,
+                             tool_stats: dict, run: AgentRun,
+                             stream: SessionStream | None = None) -> str:
+        """终局前 self_critique（economy，≤200 token）：本次工具使用的过程教训。"""
+        try:
+            text = await self.gw.simple(
+                [{"role": "user", "content": SELF_CRITIQUE_PROMPT.format(
+                    calls=tool_stats.get("calls", 0),
+                    errors=tool_stats.get("errors", 0),
+                    blocked=tool_stats.get("blocked", 0),
+                    cached=tool_stats.get("cached", 0),
+                    answer=(final_text or "（无文本回答）")[:200])}],
+                "economy", session_id=task.session_id, role="self_critique",
+                max_tokens=200)
+            critique = (text or "").strip()[:200]
+            if critique and stream is not None:
+                self._emit(stream, "note", {
+                    "run_id": run.run_id, "kind": "self_critique",
+                    "text": critique})
+            return critique
+        except Exception:
+            logger.debug("self_critique 生成失败（不阻断终态）", exc_info=True)
+            return ""
+
+    async def _emit_plan(self, task: ChatTask, stream: SessionStream,
+                         run: AgentRun) -> None:
+        """planning 阶段的 1-3 步计划（economy 一次调用；失败静默跳过）。"""
+        try:
+            text = await self.gw.simple(
+                [{"role": "user", "content": PLAN_PROMPT.format(
+                    q=task.user_message[:500])}],
+                "economy", session_id=task.session_id, role="plan",
+                max_tokens=120)
+            steps = _parse_plan_steps(text)
+            if steps:
+                self._emit(stream, "plan", {"run_id": run.run_id, "steps": steps})
+        except Exception:
+            logger.debug("plan 生成失败（忽略）", exc_info=True)
 
     # ---------- 状态与终态 ----------
 
@@ -343,6 +432,10 @@ class ReActEngine:
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         if task.history_block:
             messages.append({"role": "system", "content": task.history_block})
+        # L2 进化注入：上次同类任务的过程教训（self_critique，与决策记忆同构）
+        if task.last_self_critique:
+            messages.append({"role": "system", "content":
+                             f"上次同类任务的过程教训（self_critique）：{task.last_self_critique}"})
         messages.extend(task.history)
         messages.append({"role": "user", "content": task.user_message})
         return messages

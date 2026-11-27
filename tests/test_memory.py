@@ -10,11 +10,15 @@ import pytest
 from backend.engine.askuser import AskUserManager
 from backend.memory.decisions import DecisionStore, direction_ok
 from backend.memory.reflections import settle_return
-from backend.memory.summarize import (estimate_tokens, fact_readback_verify,
-                                      keep_recent, parse_summary_json,
-                                      render_history, should_summarize,
-                                      LayeredSummary)
-
+from backend.memory.summarize import (
+    LayeredSummary,
+    estimate_tokens,
+    fact_readback_verify,
+    keep_recent,
+    parse_summary_json,
+    render_history,
+    should_summarize,
+)
 
 # ---------- 分层摘要 ----------
 

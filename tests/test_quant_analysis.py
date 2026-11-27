@@ -8,9 +8,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backend.quant.factors import (analyze_cross_section, composite_score,
-                                   compute_factors, factor_ic_table, ic_t_stat,
-                                   mad_clip, rank_ic, zscore)
+from backend.quant.factors import (
+    analyze_cross_section,
+    composite_score,
+    compute_factors,
+    factor_ic_table,
+    ic_t_stat,
+    mad_clip,
+    rank_ic,
+    zscore,
+)
 from backend.quant.walkforward import make_folds, walk_forward
 
 

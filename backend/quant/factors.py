@@ -96,6 +96,14 @@ def ic_t_stat(ic_series: pd.Series) -> float:
     return float(s.mean() / s.std() * (len(s) ** 0.5))
 
 
+def ic_ir(ic_series: pd.Series) -> float:
+    """IC 信息比率（IC 均值 / IC 标准差）：>0.3 即稳定选股能力，>0.5 优秀。"""
+    s = ic_series.dropna()
+    if len(s) < 3 or s.std() == 0:
+        return 0.0
+    return float(s.mean() / s.std())
+
+
 def ic_decay(factor_series_by_date: dict[str, pd.Series],
              returns_by_horizon: dict[str, dict[int, pd.Series]]) -> dict[int, float]:
     """IC 衰减曲线：1/5/10/20/60 日各档平均 IC。"""
@@ -130,14 +138,20 @@ def analyze_cross_section(panel: pd.DataFrame, forward_return_20d: pd.Series,
 
 
 def factor_ic_table(price_wide: pd.DataFrame, fundamentals: pd.DataFrame) -> dict:
-    """多期 IC 表：月度横截面 × 未来 20 日收益 → t 统计量（数据驱动因子选择）。
+    """多期 IC 表：月度横截面 × 未来 20 日收益 → t 统计量 + IC IR + IC 衰减（数据驱动因子选择）。
 
     price_wide: index=date, columns=symbols 的收盘价矩阵（后复权）。
     fundamentals: index=symbol, columns=[pe, roe] 的最新截面值（演示口径）。
+    返回体（factor_analysis 工具面）：
+      ic_table/{factor}: {ic_mean, ic_std, ic_ir, t_stat, significant}
+      ic_decay_composite: {1/5/10/20/60 日平均 IC}——因子有效性的衰减画像
     """
     dates = price_wide.index
     ret20 = price_wide.pct_change(20).shift(-20)  # 未来收益仅用于评估
-    ic_rows = []
+    # 多档前瞻收益（1/5/10/20/60 日）——IC 衰减曲线的评估基准
+    ret_by_horizon = {h: price_wide.pct_change(h).shift(-h) for h in IC_HORIZONS}
+    ic_rows: list[dict] = []
+    decay_rows: list[dict] = []  # {date, factor_values, fr20}
     step = max(len(dates) // 12, 1)  # 月度采样
     for i in range(0, len(dates) - 20, step):
         t = dates[i]
@@ -161,14 +175,32 @@ def factor_ic_table(price_wide: pd.DataFrame, fundamentals: pd.DataFrame) -> dic
         row["composite"] = rank_ic(score, fr)
         row["date"] = str(t)[:10]
         ic_rows.append(row)
+        # IC 衰减：同一截面因子值 vs 各档前瞻收益
+        decay_row = {"date": t, "factor_values": score}
+        decay_row["returns_by_horizon"] = {
+            h: (ret_by_horizon[h].loc[t] if h in ret_by_horizon else None)
+            for h in IC_HORIZONS}
+        decay_rows.append(decay_row)
     if not ic_rows:
         return {"ok": False, "reason": "横截面样本不足（每期需 ≥50 只有效标的）"}
     df = pd.DataFrame(ic_rows).set_index("date")
     table = {}
     for col in df.columns:
-        table[col] = {"ic_mean": round(float(df[col].mean()), 4),
-                      "t_stat": round(ic_t_stat(df[col]), 2),
-                      "significant": bool(abs(ic_t_stat(df[col])) > 2)}
+        s = df[col].dropna()
+        t_stat = ic_t_stat(s)
+        table[col] = {"ic_mean": round(float(s.mean()), 4),
+                      "ic_std": round(float(s.std()), 4) if len(s) else 0.0,
+                      "ic_ir": round(ic_ir(s), 3),
+                      "t_stat": round(t_stat, 2),
+                      "significant": bool(abs(t_stat) > 2)}
+    # 合成因子 IC 衰减曲线（1/5/10/20/60 日平均 IC）
+    decay: dict[str, float | None] = {}
+    for h in IC_HORIZONS:
+        ics = [rank_ic(r["factor_values"], r["returns_by_horizon"][h])
+               for r in decay_rows if r["returns_by_horizon"][h] is not None]
+        s = pd.Series(ics).dropna()
+        decay[str(h)] = round(float(s.mean()), 4) if len(s) else None
     return {"ok": bool(len(df)), "periods": len(df), "ic_table": table,
+            "ic_decay_composite": decay,
             "ic_series": {c: [None if np.isnan(x) else round(x, 4) for x in df[c]]
                           for c in df.columns}}

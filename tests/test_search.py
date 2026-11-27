@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-
-from backend.tools.search import CircuitBreaker, SearchItem, SearchService
 from backend.config import Settings
+from backend.tools.search import CircuitBreaker, SearchItem, SearchService
 
 
 def test_circuit_breaker_state_machine():

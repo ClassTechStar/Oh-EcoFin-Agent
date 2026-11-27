@@ -1,0 +1,47 @@
+name: Weekly Bench
+
+# 性能红线的历史曲线（§5.2 处方）：单点数字无说服力，周度留档才有趋势。
+# 产物上传为 artifact；docs/bench/ 的入库留档由本地 `bench_core.py > docs/bench/*.json` 补充。
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"  # 每周一 03:00 UTC
+  workflow_dispatch: {}  # 支持手动触发
+
+jobs:
+  bench-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装依赖（版本锁死）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: 核心接口基准（5 万行数据集 + 2 万目录记录）
+        run: |
+          mkdir -p docs/bench
+          python scripts/bench_core.py > "docs/bench/bench_core_${GITHUB_RUN_ID}.json"
+          cat "docs/bench/bench_core_${GITHUB_RUN_ID}.json"
+      - name: 红线判定（P95 < 2000ms）
+        run: |
+          python - <<'PY'
+          import json, sys, glob
+          path = sorted(glob.glob('docs/bench/bench_core_*.json'))[-1]
+          data = json.load(open(path, encoding='utf-8'))
+          if not data.get('ok'):
+              sys.exit('bench_core 报告 ok=False')
+          for name, m in data['metrics'].items():
+              p95 = m['p95_ms']
+              flag = 'OK ' if p95 < data['p95_limit_ms'] else 'OVER '
+              print(f"{flag}{name}: P95 {p95:.1f}ms")
+              if p95 >= data['p95_limit_ms']:
+                  sys.exit(f"{name} P95 {p95:.1f}ms 超红线 {data['p95_limit_ms']}ms")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-core-results
+          path: docs/bench/
+          retention-days: 90

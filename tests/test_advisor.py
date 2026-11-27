@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from backend.tools.advisor import (DISCLAIMER_TEXT, RISK_QUESTIONS, PortfolioParams,
-                                   AskRiskParams, score_answer, score_answers)
 from backend.quant.portfolio import PortfolioOptimizer
+from backend.tools.advisor import (
+    DISCLAIMER_TEXT,
+    RISK_QUESTIONS,
+    AskRiskParams,
+    PortfolioParams,
+    score_answer,
+    score_answers,
+)
 from backend.tools.market import MarketTools
 
 

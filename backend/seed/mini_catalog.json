@@ -1,0 +1,17 @@
+{
+  "source": "builtin_seed",
+  "source_version": "2026-11-28",
+  "description": "开箱内置迷你标的目录：与 tests/cassettes_frozen 演示白名单同源，安装后立即可检索/看 K 线。完整 30 万+ 标的目录请运行 scripts/import_catalog.py（FinanceDatabase）。",
+  "instruments": [
+    {"symbol": "600519", "exchange": "SSE", "asset_class": "equity", "name": "贵州茅台", "currency": "CNY", "sector": "Consumer Staples", "industry": "白酒", "country": "CN"},
+    {"symbol": "000858", "exchange": "SZSE", "asset_class": "equity", "name": "五粮液", "currency": "CNY", "sector": "Consumer Staples", "industry": "白酒", "country": "CN"},
+    {"symbol": "601318", "exchange": "SSE", "asset_class": "equity", "name": "中国平安", "currency": "CNY", "sector": "Financials", "industry": "保险", "country": "CN"},
+    {"symbol": "000001", "exchange": "SZSE", "asset_class": "equity", "name": "平安银行", "currency": "CNY", "sector": "Financials", "industry": "银行", "country": "CN"},
+    {"symbol": "600036", "exchange": "SSE", "asset_class": "equity", "name": "招商银行", "currency": "CNY", "sector": "Financials", "industry": "银行", "country": "CN"},
+    {"symbol": "300750", "exchange": "SZSE", "asset_class": "equity", "name": "宁德时代", "currency": "CNY", "sector": "Industrials", "industry": "动力电池", "country": "CN"},
+    {"symbol": "000333", "exchange": "SZSE", "asset_class": "equity", "name": "美的集团", "currency": "CNY", "sector": "Consumer Discretionary", "industry": "家电", "country": "CN"},
+    {"symbol": "002415", "exchange": "SZSE", "asset_class": "equity", "name": "海康威视", "currency": "CNY", "sector": "Information Technology", "industry": "安防设备", "country": "CN"},
+    {"symbol": "601012", "exchange": "SSE", "asset_class": "equity", "name": "隆基绿能", "currency": "CNY", "sector": "Industrials", "industry": "光伏", "country": "CN"},
+    {"symbol": "601888", "exchange": "SSE", "asset_class": "equity", "name": "中国中免", "currency": "CNY", "sector": "Consumer Discretionary", "industry": "免税零售", "country": "CN"}
+  ]
+}

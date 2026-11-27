@@ -37,6 +37,7 @@ from backend.engine.prompts import (
     RISK_REVIEW_PROMPT,
     SYNTHESIS_PROMPT,
 )
+from backend.memory.summarize import estimate_tokens
 from backend.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -46,16 +47,24 @@ DP_TAIL_RE = re.compile(r"DATA:\s*$", re.MULTILINE)
 
 class DebateOrchestrator:
     def __init__(self, gateway: LLMGateway, registry: ToolRegistry,
-                 debate_rounds: int = 2):
+                 debate_rounds: int = 2, *,
+                 analyst_max_rounds: int = 8,
+                 analyst_tool_token_budget: int = 24000):
         self.gw = gateway
         self.registry = registry
         self.debate_rounds = debate_rounds
+        # 分析师阶段预算护栏（与主 ReAct 的 RunBudget 同构）：防单次辩论吃掉当日成本帽
+        self.analyst_max_rounds = analyst_max_rounds
+        self.analyst_tool_token_budget = analyst_tool_token_budget
 
     # ---------- Step 1 分析师 ----------
 
     async def _analyst(self, session_id: str, symbols: list[str],
-                       stream: SessionStream | None) -> tuple[str, list[dict]]:
-        """分析师 ReAct 循环（上限 8 轮）→ DataPack 文本。"""
+                       stream: SessionStream | None) -> tuple[str, list[dict], dict]:
+        """分析师 ReAct 循环（轮次 + 工具 token 双预算）→ DataPack 文本。
+
+        返回 (dp_text, raw_results, budget_used)；预算触顶时诚实截断并在 DataPack 尾注。
+        """
         prompt = ANALYST_PROMPT.format(
             symbols=", ".join(symbols), data_as_of_hint="由工具返回的 data_as_of 注明")
         messages = [
@@ -64,8 +73,11 @@ class DebateOrchestrator:
         ]
         role_usage: dict = {"analyst": {"calls": 0, "cost_cents": 0}}
         raw_results: list[dict] = []  # 原始工具返回（溯源落库）
+        tool_tokens = 0
+        budget_used = {"rounds": 0, "tool_tokens": 0, "tool_budget_hit": False}
 
-        for _ in range(8):
+        for _ in range(self.analyst_max_rounds):
+            budget_used["rounds"] += 1
             resp = await self.gw.chat(
                 messages, tools=self.registry.schemas(),
                 session_id=session_id, role="debate:analyst",
@@ -88,15 +100,35 @@ class DebateOrchestrator:
                     res = {"ok": False, "error": str(res)}
                 raw_results.append({"tool": tc.name, "args": tc.arguments,
                                     "result": res, "ts": time.strftime("%H:%M:%S")})
+                content = json.dumps(res, ensure_ascii=False, default=str)
+                tool_tokens += estimate_tokens(content)
                 messages.append({"role": "tool", "tool_call_id": tc.id,
-                                 "content": json.dumps(res, ensure_ascii=False, default=str)})
+                                 "content": content})
+            if tool_tokens >= self.analyst_tool_token_budget:
+                # 工具结果预算触顶：停止取数，进入综合（诚实截断标记）
+                budget_used["tool_budget_hit"] = True
+                messages.append({
+                    "role": "user",
+                    "content": "（工具数据预算已用尽，请基于已收集数据立即产出 DataPack。）"})
+                resp = await self.gw.chat(
+                    messages, tools=[], session_id=session_id,
+                    role="debate:analyst",
+                    stream_cb=(self._cb(stream) if stream else None))
+                role_usage["analyst"]["calls"] += 1
+                role_usage["analyst"]["cost_cents"] += resp.cost_cents
+                if resp.text:
+                    messages.append({"role": "assistant", "content": resp.text})
+                break
+        budget_used["tool_tokens"] = tool_tokens
         # DataPack = 分析师最终文本；若无文本，回退为原始结果摘要
         dp_text = next((m["content"] for m in reversed(messages)
                         if m["role"] == "assistant" and m.get("content")), "")
         if not dp_text:
             dp_text = "\n".join(f"[{i+1}] {r['tool']} {r['result']}"
                                 for i, r in enumerate(raw_results[:10]))
-        return dp_text, raw_results
+        if budget_used["tool_budget_hit"]:
+            dp_text += "\n\n（注：分析师取数因工具预算触顶提前收束，以上为已收集部分。）"
+        return dp_text, raw_results, budget_used
 
     def _cb(self, stream: SessionStream):
         async def cb(channel: str, delta: str) -> None:
@@ -125,13 +157,42 @@ class DebateOrchestrator:
 
     async def _risk_review(self, session_id: str, dp_text: str,
                            bull: str, bear: str) -> tuple[dict, str]:
-        """风控经理：JSON {supported, unsupported, concerns} + 原始文本（审计用）。"""
+        """风控经理：submit_risk_review 强约束提交（Schema 违例重试 1 次）+ 原始文本留痕。
+
+        升级路径：正则提 JSON → Function Calling Schema 约束（与 submit_research_report
+        同款纪律）；未走工具时保留正则兜底，解析失败原样返回（verification_required 抬升）。
+        """
         prompt = RISK_REVIEW_PROMPT.format(dp="", bull=bull, bear=bear)
         content = prompt + f"\n\nDataPack:\n{dp_text}"
-        text = await self.gw.simple(
-            [{"role": "user", "content": content}], "economy",
-            session_id=session_id, role="debate:risk")
-        return self._parse_risk_json(text), text
+        messages = [{"role": "user", "content": content}]
+        raw_text = ""
+        for _attempt in range(2):
+            resp = await self.gw.chat(
+                messages, tools=self.registry.schemas(["submit_risk_review"]),
+                session_id=session_id, role="debate:risk")
+            raw_text = resp.text or raw_text
+            if resp.tool_calls:
+                tc = next((t for t in resp.tool_calls
+                           if t.name == "submit_risk_review"), None)
+                if tc:
+                    result = await self.registry.execute("submit_risk_review", tc.arguments)
+                    if result.get("ok"):
+                        review = result["risk_review"]
+                        # 原文留痕：文本为空时以工具入参 JSON 为准（Function Calling 的真实输出）
+                        raw = resp.text or tc.arguments or json.dumps(
+                            review, ensure_ascii=False)
+                        return review, raw
+                    # Schema 违例：带错误重试一次
+                    messages.append({
+                        "role": "assistant",
+                        "tool_calls": [{"id": tc.id, "type": "function",
+                                        "function": {"name": tc.name,
+                                                     "arguments": tc.arguments}}]})
+                    messages.append({"role": "tool", "tool_call_id": tc.id,
+                                     "content": json.dumps(result, ensure_ascii=False)})
+                    continue
+            break  # 未走工具 → 正则兜底
+        return self._parse_risk_json(raw_text), raw_text
 
     def _parse_risk_json(self, text: str) -> dict:
         """容错解析风控 JSON。"""
@@ -246,11 +307,24 @@ class DebateOrchestrator:
         return now_cst().strftime("%Y-%m-%d %H:%M:%S")
 
     async def run(self, session_id: str, symbols: list[str],
-                  user_question: str, stream: SessionStream | None = None) -> dict:
-        t0 = time.perf_counter()
+                  user_question: str, stream: SessionStream | None = None,
+                  *, resume_datapack: str | None = None) -> dict:
+        """辩论主入口。
 
-        # Step 1
-        dp_text, raw_results = await self._analyst(session_id, symbols, stream)
+        resume_datapack：checkpoint 续跑——Step 2/3 失败时从已固化的 DataPack 重试，
+        不再全链重跑（辩论是最贵链路；断网/模型抖动的现场救命机制）。
+        """
+        t0 = time.perf_counter()
+        resumed = bool((resume_datapack or "").strip())
+        budget_used: dict = {"rounds": 0, "tool_tokens": 0, "tool_budget_hit": False}
+
+        # Step 1（checkpoint 命中则跳过分析师取数）
+        if resumed:
+            dp_text = resume_datapack
+            raw_results: list[dict] = []  # 原始返回不可再得：诚实留痕，溯源以 checkpoint 为准
+        else:
+            dp_text, raw_results, budget_used = await self._analyst(
+                session_id, symbols, stream)
         # 溯源落库（原始返回为准）
         if stream is not None:
             for r in raw_results:
@@ -264,7 +338,8 @@ class DebateOrchestrator:
         ctx = build_context(symbols, raw_results,
                             self._analysis_as_of(raw_results), user_question)
         transcript = CommitteeTranscript(context=ctx)
-        transcript.ok_turn("analyst", 0, dp_text)
+        transcript.ok_turn("analyst", 0, dp_text,
+                           note="checkpoint 恢复（跳过分析师取数）" if resumed else "")
 
         # Step 2 辩论（隔离角色 + 失败可见 + 原文留痕）
         bull, bear = "", ""
@@ -355,6 +430,8 @@ class DebateOrchestrator:
             "ok": True,
             "report": report,
             "datapack": dp_text,
+            "resumed": resumed,
+            "analyst_budget": budget_used,
             "context": ctx.to_audit_dict(),
             "transcript": transcript.to_audit_dict(),
             "verification_required": transcript.verification_required,
