@@ -29,7 +29,7 @@ def test_circuit_breaker_half_open_failure_reopens():
         cb.on_failure()
     import time
 
-    time.sleep(0.06)
+    time.sleep(0.2)  # 留足 Windows 计时器余量，避免 wall-clock 抖动导致偶发失败
     assert cb.allow()
     cb.on_failure()
     assert cb.state == "open"  # 半开失败 → 立即再熔断

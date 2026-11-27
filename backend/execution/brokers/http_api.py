@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlparse
 
 import httpx
 
@@ -35,11 +36,15 @@ class HttpBrokerAdapter:
     def __init__(self, config: ExecutionConfig, *,
                  transport: httpx.AsyncBaseTransport | None = None):
         self.config = config
+        host = (urlparse(config.http_base_url).hostname or "").lower()
+        # 本机/回环地址禁用系统代理（避免被代理中间层改写为 502）
+        trust_env = host not in ("127.0.0.1", "localhost", "::1")
         self._client = httpx.AsyncClient(
             base_url=config.http_base_url.rstrip("/") if config.http_base_url else "",
             headers={"Authorization": f"Bearer {config.http_token}"} if config.http_token else {},
             timeout=float(config.timeout_seconds or 10.0),
             transport=transport,
+            trust_env=trust_env,
         )
 
     def _require_config(self) -> None:

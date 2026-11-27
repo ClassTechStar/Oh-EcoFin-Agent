@@ -88,11 +88,13 @@ class ExecutionConfig(BaseSettings):
 
 
 class Settings(BaseSettings):
-    """根配置对象。环境变量前缀 FINAGENT_，嵌套分隔符 __。"""
+    """根配置对象。优先级：config.yaml（显式实参）> 环境变量 > .env > 默认值。"""
 
     model_config = SettingsConfigDict(
         env_prefix="FINAGENT_",
         env_nested_delimiter="__",
+        env_file=str(PROJECT_ROOT / ".env"),
+        env_file_encoding="utf-8",
         extra="ignore",
     )
 
