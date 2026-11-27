@@ -109,40 +109,18 @@ class ResearchTools:
 
     # ---------- get_financial ----------
 
-    def _fetch_financial_sync(self, symbol: str):
-        import akshare as ak
-
-        df = ak.stock_financial_abstract_ths(symbol=symbol, indicator="按报告期")
-        return df
-
     async def get_financial(self, symbol: str) -> dict:
+        """主要财务指标（统一走 Provider，真实源与离线卡带同契约）。"""
         cached = self._fin_cache.get(symbol)
         if cached and time.time() - cached[0] < self.fin_cache_ttl:
-            return {"ok": True, "symbol": symbol, **cached[1]}
-        if self.market.demo_mode:
-            # DEMO_MODE 财务卡带
-            import json
-            from pathlib import Path
-
-            p = Path(self.market.cassette_dir) / "financial" / f"{symbol}.json"
-            if p.exists():
-                data = json.loads(p.read_text(encoding="utf-8"))
-                self._fin_cache[symbol] = (time.time(), data)
-                return {"ok": True, "symbol": symbol, **data}
-            return {"ok": False, "reason": f"DEMO_MODE 财务卡带缺失: {symbol}"}
+            return {"ok": True, "symbol": symbol, **cached[1], "cached": True}
         try:
-            await self.bucket.acquire()
-            df = await asyncio.get_running_loop().run_in_executor(
-                None, lambda: self._fetch_financial_sync(symbol))
+            if not self.market.demo_mode:
+                await self.bucket.acquire()
+            indicators = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: self.market.provider.financial_indicators(symbol))
         except Exception as e:
-            return {"ok": False, "reason": f"财务数据获取失败: {type(e).__name__}"}
-        indicators = []
-        cols = list(df.columns)
-        keep_cols = [c for c in cols if any(k in str(c) for k in
-                     ("报告期", "营业总收入", "营业收入", "净利润", "毛利率",
-                      "经营现金", "同比增长"))][:10]
-        for _, row in df.head(4).iterrows():
-            indicators.append({str(k): row[k] for k in keep_cols})
+            return {"ok": False, "reason": f"财务数据获取失败: {type(e).__name__}: {e}"}
         data = {"indicators": indicators}
         self._fin_cache[symbol] = (time.time(), data)
         return {"ok": bool(indicators), "symbol": symbol, **data}

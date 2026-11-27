@@ -1,16 +1,15 @@
-"""行情工具：get_quote（快照命中 <50ms）/ get_kline（AKShare 日线 + TTL 缓存）。"""
+"""行情工具：get_quote（快照命中 <50ms）/ get_kline（Provider 日线 + TTL 缓存）。"""
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
-from pathlib import Path
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from backend.data.providers import AkshareProvider, OfflineProvider
 from backend.data.quality import check_limit_hit, check_suspended, classify_board, freshness
 from backend.data.ratelimit import TokenBucket
 
@@ -57,13 +56,17 @@ class MarketTools:
 
     def __init__(self, snapshot, bucket: TokenBucket | None = None,
                  kline_cache_ttl: int = 3600, cassette_dir: str = "",
-                 demo_mode: bool = False):
+                 demo_mode: bool = False, provider=None):
         self.snapshot = snapshot
         self.bucket = bucket or TokenBucket()
         self.kline_cache: dict[str, tuple[float, dict]] = {}
         self.kline_cache_ttl = kline_cache_ttl
         self.demo_mode = demo_mode
         self.cassette_dir = cassette_dir
+        self.provider = provider or (
+            OfflineProvider(cassette_dir) if demo_mode
+            else AkshareProvider(self.bucket)
+        )
         self._kline_df_cache: dict[str, pd.DataFrame] = {}
 
     # ---------- get_quote ----------
@@ -104,42 +107,22 @@ class MarketTools:
 
     # ---------- get_kline ----------
 
-    def _load_cassette_kline(self, symbol: str) -> pd.DataFrame | None:
-        """DEMO_MODE 冻结卡带（JSON，避免 parquet 依赖）。"""
-        path = Path(self.cassette_dir) / "klines" / f"{symbol}.json"
-        if path.exists():
-            return pd.DataFrame(json.loads(path.read_text(encoding="utf-8")))
-        return None
-
-    def _fetch_kline_sync(self, symbol: str, days: int, adjust: str) -> pd.DataFrame:
-        import akshare as ak
-
-        start = (pd.Timestamp.now() - pd.Timedelta(days=days)).strftime("%Y%m%d")
-        end = pd.Timestamp.now().strftime("%Y%m%d")
-        df = ak.stock_zh_a_hist(symbol=symbol, period="daily",
-                                start_date=start, end_date=end, adjust=adjust)
-        # 中文列名重映射（AKShare 列名随版本漂移 → 归一层）
-        rename = {"日期": "date", "开盘": "open", "最高": "high", "最低": "low",
-                  "收盘": "close", "成交量": "volume", "成交额": "amount"}
-        df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
-        return df
-
     async def get_kline_raw(self, symbol: str, days: int = 120, adjust: str = "hfq") -> pd.DataFrame:
-        """原始 K 线 DataFrame（回测/因子复用；走令牌桶 + TTL 缓存）。"""
+        """原始 K 线 DataFrame（回测/因子复用；走令牌桶 + TTL 缓存）。
+
+        取数统一走 Provider：真实源（东财→新浪）与离线卡带同契约，
+        列名漂移只在 Provider 的归一化层处理。
+        """
         cache_key = f"{symbol}:{adjust}"
         hit = self._kline_df_cache.get(cache_key)
         if hit is not None:
             df, ts = hit
             if time.time() - ts < self.kline_cache_ttl and len(df) >= min(days, 60):
                 return df
-        if self.demo_mode:
-            df = self._load_cassette_kline(symbol)
-            if df is None:
-                raise RuntimeError(f"DEMO_MODE K线卡带缺失: {symbol}")
-        else:
+        if not self.demo_mode:
             await self.bucket.acquire()
-            df = await asyncio.get_running_loop().run_in_executor(
-                None, lambda: self._fetch_kline_sync(symbol, days, adjust))
+        df = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: self.provider.daily_bar(symbol, days, adjust))
         self._kline_df_cache[cache_key] = (df, time.time())
         return df
 

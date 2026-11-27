@@ -22,26 +22,23 @@ import pandas as pd
 
 from backend.config import Settings
 from backend.data.calendar import TradeCalendar, now_cst
+from backend.data.providers import (MarketDataProvider, build_provider,
+                                    spot_to_legacy)
 from backend.data.quality import validate_snapshot_df
 from backend.data.ratelimit import TokenBucket
 
 logger = logging.getLogger(__name__)
 
-# 新浪源 → 东财口径列名映射（归一层）
-SINA_COLUMN_MAP = {
-    "代码": "代码", "名称": "名称", "最新价": "最新价", "涨跌幅": "涨跌幅",
-    "成交量": "成交量", "成交额": "成交额", "换手率": "换手率",
-    "市盈率": "市盈率-动态", "市净率": "市净率", "总市值": "总市值", "量比": "量比",
-}
-
 
 class SnapshotService:
     """进程生命周期常驻的后台任务。"""
 
-    def __init__(self, settings: Settings, calendar: TradeCalendar | None = None):
+    def __init__(self, settings: Settings, calendar: TradeCalendar | None = None,
+                 provider: MarketDataProvider | None = None):
         self.settings = settings
         self.calendar = calendar or TradeCalendar()
         self.bucket = TokenBucket(settings.data.rate_limit_rps, settings.data.rate_limit_burst)
+        self.provider = provider or build_provider(settings)
         self._df: pd.DataFrame | None = None
         self._as_of: str = ""
         self._stale: bool = True
@@ -51,7 +48,6 @@ class SnapshotService:
         self._task: asyncio.Task | None = None
         self._watchlist: set[str] = set()
         self._precompute_fn = None  # 由 precompute 模块注入
-        self._cassette_rows: list[dict] | None = None
 
     # ---------- 读侧（无锁） ----------
 
@@ -105,49 +101,21 @@ class SnapshotService:
 
     # ---------- 拉取（东财 → 新浪降级） ----------
 
-    def _fetch_em(self) -> pd.DataFrame:
-        import akshare as ak
-
-        return ak.stock_zh_a_spot_em()
-
-    def _fetch_sina(self) -> pd.DataFrame:
-        import akshare as ak
-
-        df = ak.stock_zh_a_spot()
-        df = df.rename(columns={k: v for k, v in SINA_COLUMN_MAP.items() if k in df.columns})
-        return df
-
-    def _load_cassette(self) -> pd.DataFrame | None:
-        """DEMO_MODE 冻结卡带（data/cassettes_frozen/snapshot.json）。"""
-        if self._cassette_rows is not None:
-            return pd.DataFrame(self._cassette_rows)
-        path = Path(self.settings.cassette_dir) / "snapshot.json"
-        if path.exists():
-            import json
-
-            self._cassette_rows = json.loads(path.read_text(encoding="utf-8"))
-            logger.info("DEMO_MODE：已加载冻结快照卡带 %d 行", len(self._cassette_rows))
-            return pd.DataFrame(self._cassette_rows)
-        return None
+    # ---------- 拉取（Provider 抽象：东财 → 新浪降级 / 离线卡带） ----------
 
     async def refresh_once(self) -> bool:
-        """单次刷新（DEMO_MODE 优先读卡带）。"""
-        if self.settings.app.demo_mode:
-            df = self._load_cassette()
-            if df is None or df.empty:
-                logger.error("DEMO_MODE 卡带缺失，请先运行 scripts/freeze_demo.py 预抓")
-                return False
-            self._swap(df, "cassette")
-            self._stale = True  # 冻结数据永远标记 stale（诚实降级）
-            return True
+        """单次刷新：统一走 Provider（DEMO_MODE 由 OfflineProvider 承载）。"""
         try:
-            await self.bucket.acquire()
-            use_sina = self._fail_count >= 3
-            fetch = self._fetch_sina if use_sina else self._fetch_em
-            df = await asyncio.get_running_loop().run_in_executor(None, fetch)
-            self._swap(df, "sina" if use_sina else "eastmoney")
-            if use_sina:
-                logger.info("新浪源刷新成功，恢复东财调度")
+            if not self.settings.app.demo_mode:
+                await self.bucket.acquire()
+            df = await asyncio.get_running_loop().run_in_executor(
+                None, self.provider.spot_all)
+            if df is None or df.empty:
+                raise ValueError("Provider 返回空快照")
+            legacy = spot_to_legacy(df)
+            self._swap(legacy, self.provider.last_source)
+            if self.settings.app.demo_mode:
+                self._stale = True  # 冻结数据永远标记 stale（诚实降级）
             return True
         except Exception as e:
             self._fail_count += 1
