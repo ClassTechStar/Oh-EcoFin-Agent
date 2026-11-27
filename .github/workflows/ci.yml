@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  backend-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装依赖（版本锁死）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: 静态检查（ruff）
+        run: |
+          pip install ruff==0.14.6
+          ruff check backend scripts eval --exit-zero
+      - name: 未来函数扫描（零报警门禁）
+        run: python scripts/scan_future_functions.py
+      - name: 单测 + 卡带回放集成（CI 零密钥零成本）
+        env:
+          FINAGENT_DB_PATH: ${{ runner.temp }}/finagent-test.db
+        run: pytest tests/ -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 安装依赖
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - name: 构建
+        working-directory: frontend
+        run: npm run build
+      - name: Bundle 预算（首屏 <300KB gzip）
+        working-directory: frontend
+        run: |
+          FIRST=$(gzip -c dist/assets/index-*.js | wc -c)
+          CSS=$(gzip -c dist/assets/index-*.css | wc -c)
+          echo "首屏 JS gzip: $FIRST bytes, CSS gzip: $CSS bytes"
+          LIMIT=$((300 * 1024))
+          TOTAL=$((FIRST + CSS))
+          if [ $TOTAL -gt $LIMIT ]; then
+            echo "❌ 首屏 bundle 超预算: $TOTAL > $LIMIT"
+            exit 1
+          fi
+          echo "✅ 首屏 bundle: $TOTAL bytes（<300KB gzip）"
+
+  # 真实冒烟（真模型真数据）不进 CI：本地手动 scripts 冒烟 + 答辩前全量跑一次
