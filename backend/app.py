@@ -43,6 +43,7 @@ from backend.memory.summarize import (
     render_history,
     should_summarize,
 )
+from backend.quant.audit_store import AuditStore
 from backend.quant.compliance import EQUITY_CAPS
 from backend.quant.portfolio import PortfolioOptimizer
 from backend.security.keyring_loader import load_key, missing_required_keys
@@ -120,7 +121,7 @@ class AppContext:
 
         research = ResearchTools(self.market, self.search, self.precompute)
         advisor = AdvisorTools(self.market, self.optimizer)
-        quant = QuantTools(self.market)
+        quant = QuantTools(self.market, store=AuditStore(self.db))
         reg = self.registry
 
         async def search_news_tool(query: str, symbol: str = "",
@@ -442,6 +443,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def _run_debate(sid: str, symbol: str, question: str, stream):
         result = await ctx.debate.run(sid, [symbol] if symbol else ["000001"],
                                       question, stream)
+        # 六段原文 + context_id 落库（断线/重启后可回放，报告 5.9 debate_runs）
+        transcript = result.get("transcript")
+        if transcript:
+            try:
+                from backend.engine.committee import persist_audit
+
+                result["debate_run_id"] = persist_audit(
+                    ctx.db, transcript, symbol=symbol or "000001",
+                    verdict=str(result.get("report", {}).get("verdict", "neutral")),
+                    status="review" if result.get("verification_required") else "ok")
+            except Exception:
+                logger.exception("辩论审计落库失败")
         stream.publish("message_delta", {"text": json.dumps(
             {"type": "report", "report": result["report"],
              "debate": {k: v for k, v in result["debate"].items()},

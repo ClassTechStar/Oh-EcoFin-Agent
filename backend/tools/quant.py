@@ -72,9 +72,11 @@ class FactorParams(BaseModel):
 
 
 class QuantTools:
-    def __init__(self, market, bucket: TokenBucket | None = None):
+    def __init__(self, market, bucket: TokenBucket | None = None,
+                 store=None):
         self.market = market
         self.bucket = bucket or TokenBucket()
+        self.store = store  # AuditStore | None：回测结果落库（M8/M9）
         self._df_cache: dict[str, tuple] = {}
 
     async def _get_df(self, symbol: str, days: int):
@@ -88,6 +90,13 @@ class QuantTools:
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             None, lambda: run_backtest(df, symbol, fast, slow))
+        if result.get("ok") and self.store is not None:
+            try:
+                result["run_id"] = await loop.run_in_executor(
+                    None, lambda: self.store.save_backtest(result))
+            except Exception as e:
+                logger.exception("回测结果落库失败")
+                result.setdefault("warnings", []).append(f"回测结果落库失败: {e}")
         return result
 
     async def walk_forward_tool(self, symbol: str, max_folds: int = 4) -> dict:
