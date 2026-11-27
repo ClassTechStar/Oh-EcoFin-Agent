@@ -1,0 +1,21 @@
+{
+  "name": "oh-ecofin-agent-frontend",
+  "private": true,
+  "version": "4.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "echarts": "5.6.0",
+    "lightweight-charts": "4.2.3",
+    "vue": "3.5.22"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.2",
+    "typescript": "5.9.3",
+    "vite": "7.1.11"
+  }
+}

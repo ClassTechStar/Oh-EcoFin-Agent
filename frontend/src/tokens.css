@@ -1,0 +1,140 @@
+/* 设计 Token 单一来源：桌面/移动/浏览器三端同源。
+   红涨绿跌铁律：--up 是涨（红）、--down 是跌（绿）——与美股相反，禁止任何组件硬编码颜色。 */
+
+:root {
+  /* A 股配色（红涨绿跌） */
+  --up: #e03e3e;          /* 涨：红 */
+  --down: #0f8b6d;        /* 跌：绿 */
+  --up-bg: rgba(224, 62, 62, 0.08);
+  --down-bg: rgba(15, 139, 109, 0.08);
+
+  /* 品牌色 */
+  --primary: #1f4e79;
+  --primary-light: #e8f0f7;
+  --accent: #c9a227;
+
+  /* 中性色 */
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --border: #e3e6ea;
+  --text-1: #1c2126;
+  --text-2: #5f6b76;
+  --text-3: #9aa4af;
+
+  /* 状态 */
+  --ok: #0f8b6d;
+  --warn: #e6a23c;
+  --error: #d03050;
+  --stale: #e6a23c;
+
+  /* 层级 */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 3px rgba(28, 33, 38, 0.08);
+
+  /* 字体 */
+  --font: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", Consolas, "Courier New", monospace;
+}
+
+/* 数字等宽全局纪律（财务表格列对齐） */
+.num, .metric, td.num, .price, .pct {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+/* 涨跌语义类：全部吃 Token */
+.pct-up   { color: var(--up); }
+.pct-down { color: var(--down); }
+.badge-fresh-green  { color: #0f8b6d; }  /* 🟢 盘中 <90s */
+.badge-fresh-yellow { color: #e6a23c; }  /* 🟡 盘中 >90s / 盘后当日 */
+.badge-fresh-red    { color: #d03050; }  /* 🔴 隔日 */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text-1);
+  -webkit-font-smoothing: antialiased;
+}
+#app { height: 100vh; display: flex; flex-direction: column; }
+
+button {
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-1);
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+button:hover { background: var(--surface-2); }
+button.primary {
+  background: var(--primary); color: #fff; border-color: var(--primary);
+}
+button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* 骨架屏（防"白屏即卡顿"错觉） */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--border) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* 折叠面板（工具调用时间线） */
+details.tool-call {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  margin: 4px 0;
+  font-size: 12px;
+}
+details.tool-call summary {
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--text-2);
+  display: flex; gap: 8px; align-items: center;
+  list-style: none;
+}
+details.tool-call summary::-webkit-details-marker { display: none; }
+details.tool-call .raw {
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-2);
+  max-height: 240px;
+  overflow: auto;
+  border-top: 1px dashed var(--border);
+}
+
+/* 引用编号可点 */
+.cite {
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 0.78em;
+  vertical-align: super;
+  padding: 0 2px;
+}
+.cite:hover { text-decoration: underline; }
+
+/* 选项卡片组（ask_user） */
+.ask-options { display: flex; flex-direction: column; gap: 8px; }
+.ask-options button { text-align: left; padding: 10px 14px; }
+
+@media (max-width: 768px) {
+  .desktop-only { display: none !important; }
+}
