@@ -8,6 +8,8 @@ on:
 jobs:
   backend-tests:
     runs-on: windows-latest
+    env:
+      PYTHONIOENCODING: utf-8   # Windows runner 控制台 cp1252 编不了中文/emoji 输出
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

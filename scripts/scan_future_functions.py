@@ -46,6 +46,12 @@ def scan() -> list[str]:
 
 
 def main() -> None:
+    # Windows 控制台（cp1252/cp936）编不了 ✅/❌ → 输出流强制 UTF-8
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
     violations = scan()
     if violations:
         print("❌ 未来函数扫描报警：")
