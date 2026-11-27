@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 明文 HTTP 约束（避坑清单 #7）：仅放行演示局域网 IP，不全局开 usesCleartextTraffic。
+     使用前把 <demo-ip> 替换为答辩现场电脑的局域网 IP（连接手机按钮/二维码里显示的地址）。
+     放置位置：android/app/src/main/res/xml/network_security_config.xml -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- 演示机局域网 IP，逐个登记 -->
+        <domain includeSubdomains="false">192.168.31.100</domain>
+        <domain includeSubdomains="false">192.168.1.100</domain>
+        <!-- 热点常用网段示例 -->
+        <domain includeSubdomains="false">192.168.43.1</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

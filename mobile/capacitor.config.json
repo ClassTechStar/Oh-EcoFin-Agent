@@ -1,0 +1,13 @@
+{
+  "appId": "club.oh.ecofin.agent",
+  "appName": "Oh EcoFin Agent",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "http",
+    "hostname": "localhost"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
