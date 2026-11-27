@@ -1,0 +1,49 @@
+# Oh EcoFin Agent 配置文件（优先级：环境变量 > config.yaml > 代码默认值）
+# 全部字段可在 backend/config.py Settings 中查看类型与校验规则。
+
+llm:
+  primary_model: glm-5.3-flash
+  economy_model: deepseek-flash
+  primary_base_url: https://open.bigmodel.cn/api/paas/v4
+  economy_base_url: https://api.deepseek.com/v1
+  timeout_seconds: 60
+  max_rounds: 12
+  debate_rounds: 2          # 辩论轮数，进度紧张可降为 1（降级预案）
+  daily_cost_cap_cny: 20    # 日成本熔断（元）
+
+data:
+  snapshot_interval_intraday: 60   # 盘中快照间隔（秒）
+  snapshot_interval_idle: 1800     # 盘后/非交易日间隔（秒）
+  rate_limit_rps: 1.0              # AKShare 全局令牌桶 1 req/s
+  rate_limit_burst: 3              # 短突发容量
+  kline_cache_ttl: 3600            # K 线缓存（秒）
+  news_cache_ttl: 1800             # 新闻缓存（秒）
+  notice_cache_ttl: 600            # 公告缓存（秒）
+
+search:
+  enabled_sources: [bocha, zhipu, deepseek]
+  circuit_failure_threshold: 3     # 连续 3 次失败熔断
+  circuit_cooldown_seconds: 300    # 熔断 5 分钟
+  news_max_hours: 24               # 默认只取 24h 内
+  fallback_hours: 72               # 不足 3 条放宽至 72h
+
+advisor:
+  risk_levels: [R1, R2, R3, R4, R5]
+  equity_caps: {R1: 0.0, R2: 0.10, R3: 0.35, R4: 0.45, R5: 0.50}
+  single_caps: {R1: 0.0, R2: 0.10, R3: 0.20, R4: 0.25, R5: 0.30}
+
+server:
+  host: 127.0.0.1           # 永不默认 0.0.0.0
+  port: 8765
+  sse_heartbeat_seconds: 15
+  replay_buffer_size: 500   # 断线重连环形缓冲条数
+  ask_user_timeout_seconds: 600  # 挂起 10 分钟自动取消
+
+memory:
+  summarize_trigger_tokens: 20000
+  summarize_trigger_rounds: 20
+  keep_recent_rounds: 6
+
+app:
+  demo_mode: false          # DEMO_MODE=1 答辩离线兜底，数据层读冻结卡带
+  lan_mode: false           # 局域网模式需显式开启 + 随机 token

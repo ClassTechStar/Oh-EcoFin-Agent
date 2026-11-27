@@ -1,0 +1,20 @@
+[project]
+name = "oh-ecofin-agent"
+version = "4.0.0"
+description = "教学演示用 A 股投研智能体（全栈国产化：GLM/DeepSeek + AKShare + Backtrader）"
+requires-python = ">=3.12,<3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --tb=short"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv", "frontend", "mobile", "desktop/build", "*.ipynb", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
+ignore = ["E501", "B008", "N815", "SIM108", "UP035", "UP006", "UP007", "UP045", "UP038", "UP028", "B904", "N806", "N803", "N802", "E712", "SIM117", "SIM105", "SIM102", "C408", "SIM115", "B023", "SIM110", "SIM103", "SIM212", "C416", "E731", "E402", "SIM108"]

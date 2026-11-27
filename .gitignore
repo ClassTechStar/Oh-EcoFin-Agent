@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 密钥与环境（真实密钥走 keyring / 环境变量，绝不入库）
+.env
+*.key
+
+# 数据与运行时产物
+*.db
+*.db-wal
+*.db-shm
+data/cache/
+data/cassettes_frozen/
+logs/
+dist/
+build/
+
+# 前端
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# 移动端
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/android/local.properties
+mobile/android/.idea/
+mobile/android/capacitor-cordova-android-plugins/
+
+# 桌面打包
+desktop/build/
+desktop/dist/
+*.spec.bak
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
