@@ -13,15 +13,17 @@ import re
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from backend.config import Settings, load_settings
 from backend.data.calendar import TradeCalendar
 from backend.data.precompute import PrecomputeService
+from backend.data.quality import check_suspended
 from backend.data.ratelimit import TokenBucket
 from backend.data.snapshot import SnapshotService
 from backend.db import AsyncDatabase, Database
@@ -31,6 +33,15 @@ from backend.engine.events import StreamHub
 from backend.engine.gateway import CostLedger, LLMGateway
 from backend.engine.prompts import DISCLAIMER
 from backend.engine.react import ChatTask, ReActEngine
+from backend.execution import (
+    CapitalGate,
+    ExecutionStore,
+    GateChain,
+    OrderRequest,
+    OrderRouter,
+    PaperBroker,
+    SuitabilityGate,
+)
 from backend.memory.decisions import DecisionStore
 from backend.memory.reflections import history_block
 from backend.memory.store import SessionStore
@@ -44,11 +55,20 @@ from backend.memory.summarize import (
     should_summarize,
 )
 from backend.quant.audit_store import AuditStore
-from backend.quant.compliance import EQUITY_CAPS
+from backend.quant.backtest import limit_pct_for
+from backend.quant.compliance import EQUITY_CAPS, SINGLE_CAPS
 from backend.quant.portfolio import PortfolioOptimizer
 from backend.security.keyring_loader import load_key, missing_required_keys
 from backend.security.logmask import SensitiveFilter, mask_result_for_storage
 from backend.security.tokens import generate_token, verify_token
+from backend.signals import (
+    MarketDataContext,
+    MaxWeight,
+    SignalStore,
+    compose,
+    default_models,
+    run_models,
+)
 from backend.tools.advisor import RISK_QUESTIONS, AdvisorTools, AskRiskParams, PortfolioParams
 from backend.tools.market import KlineParams, MarketTools, QuoteParams
 from backend.tools.quant import BacktestParams, FactorParams, QuantTools, WalkForwardParams
@@ -79,6 +99,58 @@ class ResumeRequest(BaseModel):
     choice: str
 
 
+class PaperOrderRequest(BaseModel):
+    """仿真下单请求：价格由服务端按最新快照决定（禁止前端伪造成交价）。"""
+
+    symbol: str
+    side: Literal["buy", "sell"]
+    qty: int = Field(..., ge=1, le=1_000_000)
+    risk_level: str = "R3"
+    strategy_id: str = "manual"
+    order_type: Literal["market", "limit"] = "market"
+    limit_price: float | None = Field(None, gt=0)
+
+
+def _norm_symbol(raw: str) -> str:
+    sym = str(raw).strip().zfill(6)
+    if not re.fullmatch(r"\d{6}", sym):
+        raise HTTPException(status_code=400, detail=f"非法股票代码: {raw}")
+    return sym
+
+
+def _symbol_quote(snapshot: SnapshotService, symbol: str) -> dict:
+    """快照 → 撮合参考价 / 涨跌停价（快照缺失即拒绝，不用客户端价格冒充）。"""
+    row = snapshot.row(symbol)
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"快照无 {symbol}：请等待快照刷新，或使用 DEMO 卡带启动")
+    try:
+        price = float(row.get("最新价"))
+    except (TypeError, ValueError):
+        price = 0.0
+    if price <= 0:
+        raise HTTPException(status_code=404, detail=f"{symbol} 无有效最新价")
+    try:
+        pct = float(row.get("涨跌幅") or 0.0)
+    except (TypeError, ValueError):
+        pct = 0.0
+    name = str(row.get("名称") or "")
+    prev_close = price / (1 + pct / 100) if pct > -100 else price
+    limit = limit_pct_for(symbol, name)
+    return {
+        "symbol": symbol,
+        "name": name,
+        "price": round(price, 2),
+        "pct_chg": pct,
+        "prev_close": round(prev_close, 4),
+        "limit_up": round(prev_close * (1 + limit / 100), 2),
+        "limit_down": round(prev_close * (1 - limit / 100), 2),
+        "suspended": check_suspended(row),
+        "data_as_of": snapshot.as_of,
+    }
+
+
 class AppContext:
     """全局单例容器（app.state.ctx）。"""
 
@@ -101,6 +173,14 @@ class AppContext:
         self.sessions = SessionStore(self.db)
         self.decisions = DecisionStore(self.db)
         self.optimizer = PortfolioOptimizer()
+        # M7 信号 / M10 仿真执行（进程内单账户，重启即重置——教学演示语义）
+        self.signal_store = SignalStore(self.db)
+        self.broker = PaperBroker()
+        self.exec_store = ExecutionStore(self.db)
+        self.router = OrderRouter(
+            GateChain([SuitabilityGate(), CapitalGate()]),
+            self.broker, self.exec_store)
+        self.paper_open_equity = float(self.broker.initial_cash)
         self.registry = ToolRegistry()
         self.search = None
         self.gateway: LLMGateway | None = None
@@ -269,6 +349,69 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 logger.exception("事件落库失败")
         return fn
 
+    # ---------- M7/M10 看板辅助 ----------
+
+    def _paper_prices(symbols: list[str]) -> dict[str, float]:
+        prices: dict[str, float] = {}
+        for sym in symbols:
+            row = ctx.snapshot.row(sym)
+            price = 0.0
+            if row is not None:
+                try:
+                    price = float(row.get("最新价") or 0.0)
+                except (TypeError, ValueError):
+                    price = 0.0
+            prices[sym] = price if price > 0 else ctx.broker.positions[sym].avg_cost
+        return prices
+
+    def _paper_context(risk_level: str):
+        prices = _paper_prices(list(ctx.broker.positions))
+        equity = ctx.broker.context(prices).total_equity
+        acct = ctx.broker.context(
+            prices, risk_level=risk_level,
+            daily_pnl=equity - ctx.paper_open_equity,
+            daily_loss_limit=0.02)
+        return acct, prices, equity
+
+    def _paper_account(risk_level: str) -> dict:
+        acct, prices, equity = _paper_context(risk_level)
+        recon = ctx.broker.reconcile(prices)
+        positions = []
+        for sym, pos in ctx.broker.positions.items():
+            if pos.qty <= 0:
+                continue
+            price = prices.get(sym, pos.avg_cost)
+            positions.append({
+                "symbol": sym,
+                "qty": pos.qty,
+                "available_qty": pos.available_qty,
+                "avg_cost": round(pos.avg_cost, 4),
+                "price": round(price, 2),
+                "market_value": round(pos.qty * price, 2),
+                "pnl": round((price - pos.avg_cost) * pos.qty, 2),
+                "pnl_pct": round(price / pos.avg_cost - 1, 4) if pos.avg_cost else 0.0,
+            })
+        return {
+            "risk_level": risk_level,
+            "initial_cash": round(ctx.broker.initial_cash, 2),
+            "cash": round(ctx.broker.cash, 2),
+            "market_value": recon["market_value"],
+            "equity": equity,
+            "daily_pnl": round(equity - ctx.paper_open_equity, 2),
+            "position_ratio": round(1 - ctx.broker.cash / equity, 4) if equity else 0.0,
+            "positions": positions,
+            "reconcile": recon,
+            "fills": len(ctx.broker.fills),
+            "caps": {"equity": EQUITY_CAPS, "single": SINGLE_CAPS},
+            "disclaimer": DISCLAIMER,
+        }
+
+    def _risk_level(raw: str) -> str:
+        level = str(raw).strip().upper()
+        if level not in EQUITY_CAPS:
+            raise HTTPException(status_code=400, detail=f"未知风险等级: {raw}")
+        return level
+
     # ---------- 基础端点 ----------
 
     @app.get("/api/health")
@@ -310,6 +453,127 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/decisions/{symbol}")
     async def decision_history(symbol: str):
         return {"decisions": ctx.decisions.history_for(symbol.zfill(6)),
+                "disclaimer": DISCLAIMER}
+
+    # ---------- M7 信号与组合看板 ----------
+
+    @app.get("/api/signals/history")
+    async def signal_history(symbol: str = "", model: str = "",
+                             limit: int = Query(50, ge=1, le=200)):
+        sym = _norm_symbol(symbol) if symbol else None
+        return {"signals": ctx.signal_store.recent_signals(
+                    model_name=model or None, symbol=sym, limit=limit),
+                "disclaimer": DISCLAIMER}
+
+    @app.get("/api/signals/{symbol}")
+    async def signal_preview(symbol: str,
+                             mode: str = Query("long_only", description="组合模式"),
+                             gross: float = Query(0.8, gt=0, le=1,
+                                                  description="目标总仓位")):
+        sym = _norm_symbol(symbol)
+        if mode not in ("long_only", "long_short", "dollar_neutral"):
+            raise HTTPException(status_code=400, detail=f"未知组合模式: {mode}")
+        try:
+            df = await ctx.market.get_kline_raw(sym, 200, "hfq")
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"K线获取失败: {e}") from e
+        if df is None or len(df) < 60:
+            raise HTTPException(status_code=400,
+                                detail=f"{sym} K线不足（{0 if df is None else len(df)} 根）")
+        as_of = str(df["date"].iloc[-1])[:10]
+        data_ctx = MarketDataContext(ctx.market, as_of=as_of)
+        models = default_models()
+        run = await run_models(models, [sym], as_of, data_ctx)
+        weights = {m.name: 1.0 for m in models}
+        constraints = [MaxWeight(0.25)]
+        result = compose(run, weights, gross, mode=mode, constraints=constraints)
+
+        loop = asyncio.get_running_loop()
+        saved = 0
+        try:
+            saved = await loop.run_in_executor(
+                None, ctx.signal_store.save_signals, run.signals)
+            await loop.run_in_executor(
+                None, ctx.signal_store.save_target,
+                f"signals:{mode}", as_of, result.weights,
+                [{"type": "max_weight", "cap": 0.25}], result.blend.flat_reason)
+        except Exception:
+            logger.exception("信号落库失败")
+
+        return {
+            "ok": True,
+            "symbol": sym,
+            "as_of": as_of,
+            "mode": mode,
+            "gross_target": gross,
+            "models": [{"name": m.name, "approach": m.investment_approach,
+                        "horizon_days": m.horizon_days} for m in models],
+            "signals": [s.model_dump() for s in run.signals],
+            "weights": result.weights,
+            "raw_weights": result.raw_weights,
+            "convictions": result.blend.convictions,
+            "flat_reason": result.blend.flat_reason,
+            "failures": result.failures,
+            "constraints": [{"type": "max_weight", "cap": 0.25}],
+            "saved_signals": saved,
+            "disclaimer": DISCLAIMER,
+        }
+
+    # ---------- M10 仿真执行看板 ----------
+
+    @app.get("/api/paper/quote/{symbol}")
+    async def paper_quote(symbol: str):
+        return {"quote": _symbol_quote(ctx.snapshot, _norm_symbol(symbol)),
+                "disclaimer": DISCLAIMER}
+
+    @app.get("/api/paper/account")
+    async def paper_account(risk_level: str = "R3"):
+        return _paper_account(_risk_level(risk_level))
+
+    @app.post("/api/paper/orders")
+    async def paper_order(req: PaperOrderRequest):
+        risk = _risk_level(req.risk_level)
+        sym = _norm_symbol(req.symbol)
+        quote = _symbol_quote(ctx.snapshot, sym)
+        try:
+            order = OrderRequest(
+                symbol=sym, side=req.side, qty=req.qty,
+                strategy_id=req.strategy_id, price=quote["price"],
+                order_type=req.order_type, limit_price=req.limit_price)
+        except ValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        acct, _, _ = _paper_context(risk)
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, lambda: ctx.router.submit(
+                order, acct, market_price=quote["price"],
+                limit_up=quote["limit_up"], limit_down=quote["limit_down"],
+                suspended=quote["suspended"]))
+        return {"ok": result.get("ok", False), "order": result,
+                "quote": quote, "account": _paper_account(risk),
+                "disclaimer": DISCLAIMER}
+
+    @app.get("/api/paper/orders")
+    async def paper_orders(strategy_id: str = "",
+                           limit: int = Query(20, ge=1, le=100)):
+        rows = ctx.exec_store.recent_orders(limit)
+        if strategy_id:
+            rows = [r for r in rows if r.get("strategy_id") == strategy_id]
+        return {"orders": rows, "disclaimer": DISCLAIMER}
+
+    @app.get("/api/paper/risk-events")
+    async def paper_risk_events(limit: int = Query(50, ge=1, le=200)):
+        return {"events": ctx.exec_store.recent_risk_events(limit),
+                "disclaimer": DISCLAIMER}
+
+    @app.post("/api/paper/roll-day")
+    async def paper_roll_day(risk_level: str = "R3"):
+        """教学演示：模拟交易日切换（T+1 解冻 + 日初权益重置）。"""
+        risk = _risk_level(risk_level)
+        ctx.broker.roll_day()
+        prices = _paper_prices(list(ctx.broker.positions))
+        ctx.paper_open_equity = ctx.broker.context(prices).total_equity
+        return {"ok": True, "account": _paper_account(risk),
                 "disclaimer": DISCLAIMER}
 
     @app.get("/api/risk-questions")
