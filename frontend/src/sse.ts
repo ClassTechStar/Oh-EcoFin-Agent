@@ -106,7 +106,11 @@ export function autoReconnect(
 
 async function rest<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(`${BASE}/api${path}${qsToken()}`, init)
-  if (!resp.ok) throw new Error(`${path}: ${resp.status}`)
+  if (!resp.ok) {
+    let detail = `${resp.status}`
+    try { detail = (await resp.json()).detail ?? detail } catch { /* ignore */ }
+    throw new Error(`${path}: ${detail}`)
+  }
   return resp.json()
 }
 
@@ -118,6 +122,23 @@ export const api = {
   costSummary: () => rest<any>('/cost/summary'),
   riskQuestions: () => rest<any>('/risk-questions'),
   decisions: (symbol: string) => rest<any>(`/decisions/${symbol}`),
+  signals: (symbol: string, mode = 'long_only', gross = 0.8) =>
+    rest<any>(`/signals/${symbol}?mode=${encodeURIComponent(mode)}&gross=${gross}`),
+  signalHistory: (symbol = '', limit = 50) =>
+    rest<any>(`/signals/history?symbol=${encodeURIComponent(symbol)}&limit=${limit}`),
+  paperQuote: (symbol: string) => rest<any>(`/paper/quote/${symbol}`),
+  paperAccount: (riskLevel = 'R3') =>
+    rest<any>(`/paper/account?risk_level=${encodeURIComponent(riskLevel)}`),
+  paperOrder: (body: any) =>
+    rest<any>('/paper/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }),
+  paperOrders: (limit = 20) => rest<any>(`/paper/orders?limit=${limit}`),
+  paperRiskEvents: (limit = 50) => rest<any>(`/paper/risk-events?limit=${limit}`),
+  paperRollDay: (riskLevel = 'R3') =>
+    rest<any>(`/paper/roll-day?risk_level=${encodeURIComponent(riskLevel)}`, { method: 'POST' }),
   resume: (sessionId: string, qid: string, choice: string) =>
     rest<any>('/chat/resume', {
       method: 'POST',

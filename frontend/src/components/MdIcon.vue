@@ -21,6 +21,13 @@ const props = defineProps<{ name: string; size?: number | string }>()
       <rect x="3.5" y="16" width="7.5" height="4.5" rx="2" stroke="currentColor" stroke-width="1.8" />
       <rect x="13" y="12" width="7.5" height="8.5" rx="2" stroke="currentColor" stroke-width="1.8" />
     </template>
+    <!-- trading（K 线烛台 + 趋势） -->
+    <template v-else-if="name === 'trading'">
+      <path d="M7 3.5v3M7 15v5.5M17 3.5v5M17 17v3.5"
+            stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+      <rect x="4.8" y="6.5" width="4.4" height="8.5" rx="1.3" stroke="currentColor" stroke-width="1.7" />
+      <rect x="14.8" y="8.5" width="4.4" height="8.5" rx="1.3" stroke="currentColor" stroke-width="1.7" />
+    </template>
     <!-- history -->
     <template v-else-if="name === 'history'">
       <circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8" />

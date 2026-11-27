@@ -21,6 +21,7 @@ const railOpen = ref(false)
 
 const NAV = [
   { id: 'chat', label: '投研对话', icon: 'chat' },
+  { id: 'trading', label: '交易看板', icon: 'trading' },
   { id: 'cost', label: '成本看板', icon: 'dashboard' },
   { id: 'decisions', label: '决策记忆', icon: 'history' },
   { id: 'settings', label: '设置', icon: 'settings' },

@@ -4,6 +4,7 @@
 import { ref } from 'vue'
 import AppShell from './layouts/AppShell.vue'
 import ChatView from './views/ChatView.vue'
+import TradingView from './views/TradingView.vue'
 import CostView from './views/CostView.vue'
 import DecisionsView from './views/DecisionsView.vue'
 import SettingsView from './views/SettingsView.vue'
@@ -13,6 +14,7 @@ const active = ref('chat')
 
 const VIEWS: Record<string, unknown> = {
   chat: ChatView,
+  trading: TradingView,
   cost: CostView,
   decisions: DecisionsView,
   settings: SettingsView,
