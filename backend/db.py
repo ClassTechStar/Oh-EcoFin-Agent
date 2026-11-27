@@ -188,6 +188,149 @@ CREATE TABLE IF NOT EXISTS ledger(
   prev_hash TEXT,
   created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS instruments(
+  id TEXT PRIMARY KEY,
+  symbol TEXT NOT NULL,
+  exchange TEXT DEFAULT '',
+  asset_class TEXT DEFAULT 'equity',
+  name TEXT DEFAULT '',
+  currency TEXT DEFAULT '',
+  sector TEXT DEFAULT '',
+  industry TEXT DEFAULT '',
+  country TEXT DEFAULT '',
+  listing_status TEXT DEFAULT 'active',
+  is_primary INTEGER DEFAULT 1,
+  valid_from TEXT DEFAULT '',
+  valid_to TEXT,
+  source TEXT DEFAULT '',
+  source_version TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS instrument_aliases(
+  instrument_id TEXT NOT NULL,
+  alias TEXT NOT NULL,
+  alias_type TEXT DEFAULT 'name',
+  PRIMARY KEY(instrument_id, alias, alias_type)
+);
+CREATE TABLE IF NOT EXISTS catalog_snapshots(
+  id TEXT PRIMARY KEY,
+  source TEXT,
+  source_version TEXT,
+  sha256 TEXT,
+  rows INTEGER,
+  path TEXT,
+  imported_at TEXT
+);
+CREATE TABLE IF NOT EXISTS datasets(
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT DEFAULT 'local',
+  name TEXT,
+  table_name TEXT,
+  source TEXT,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS dataset_versions(
+  id TEXT PRIMARY KEY,
+  dataset_id TEXT,
+  version INTEGER,
+  sha256 TEXT,
+  manifest_json TEXT,
+  path TEXT,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS query_audit(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  dataset_ids_json TEXT,
+  sql_text TEXT,
+  sql_hash TEXT,
+  result_hash TEXT,
+  rows INTEGER,
+  elapsed_ms INTEGER,
+  ok INTEGER,
+  error TEXT,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS reports(
+  id TEXT PRIMARY KEY,
+  title TEXT,
+  subtitle TEXT,
+  status TEXT,
+  spec_json TEXT,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS report_files(
+  id TEXT PRIMARY KEY,
+  report_id TEXT,
+  format TEXT,
+  filename TEXT,
+  path TEXT,
+  sha256 TEXT,
+  bytes INTEGER,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS agent_runs(
+  id TEXT PRIMARY KEY,
+  session_id TEXT,
+  mode TEXT,
+  state TEXT,
+  stop_reason TEXT,
+  rounds INTEGER,
+  tool_calls INTEGER,
+  tool_errors INTEGER,
+  tool_blocked INTEGER,
+  tokens_in INTEGER,
+  tokens_out INTEGER,
+  cost_cents INTEGER,
+  summary TEXT,
+  started_at TEXT,
+  ended_at TEXT
+);
+CREATE TABLE IF NOT EXISTS evidence(
+  id TEXT PRIMARY KEY,
+  report_id TEXT,
+  run_id TEXT,
+  tool_call_id TEXT,
+  block_id TEXT,
+  source TEXT,
+  locator TEXT,
+  excerpt TEXT,
+  value_hash TEXT,
+  value_num REAL,
+  value_text TEXT,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS number_claims(
+  id TEXT PRIMARY KEY,
+  report_id TEXT,
+  block_id TEXT,
+  claim TEXT,
+  value REAL,
+  unit TEXT,
+  evidence_ids_json TEXT,
+  passed INTEGER,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS audit_events(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  report_id TEXT,
+  level TEXT,
+  gate TEXT,
+  detail TEXT,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS sandbox_runs(
+  id TEXT PRIMARY KEY,
+  dataset_id TEXT,
+  status TEXT,
+  code_hash TEXT,
+  exit_code INTEGER,
+  duration_ms INTEGER,
+  stdout TEXT,
+  stderr TEXT,
+  result_json TEXT,
+  files_json TEXT,
+  limits_json TEXT,
+  created_at TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_toolcalls_session ON tool_calls(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_llmcalls_created ON llm_calls(created_at);
@@ -195,6 +338,20 @@ CREATE INDEX IF NOT EXISTS idx_debate_sections_run ON debate_sections(run_id);
 CREATE INDEX IF NOT EXISTS idx_leak_reports_backtest ON leak_reports(backtest_id);
 CREATE INDEX IF NOT EXISTS idx_alpha_signals_symbol ON alpha_signals(symbol, as_of);
 CREATE INDEX IF NOT EXISTS idx_promotions_strategy ON promotions(strategy_id, id);
+CREATE INDEX IF NOT EXISTS idx_instruments_symbol ON instruments(symbol);
+CREATE INDEX IF NOT EXISTS idx_instruments_name ON instruments(name);
+CREATE INDEX IF NOT EXISTS idx_instruments_asset ON instruments(asset_class, listing_status);
+CREATE INDEX IF NOT EXISTS idx_instruments_industry ON instruments(industry);
+CREATE INDEX IF NOT EXISTS idx_aliases_alias ON instrument_aliases(alias);
+CREATE INDEX IF NOT EXISTS idx_dataset_versions_dataset ON dataset_versions(dataset_id, version);
+CREATE INDEX IF NOT EXISTS idx_query_audit_created ON query_audit(created_at);
+CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at);
+CREATE INDEX IF NOT EXISTS idx_report_files_report ON report_files(report_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_session ON agent_runs(session_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_evidence_report ON evidence(report_id, block_id);
+CREATE INDEX IF NOT EXISTS idx_claims_report ON number_claims(report_id, passed);
+CREATE INDEX IF NOT EXISTS idx_audit_events_report ON audit_events(report_id, id);
+CREATE INDEX IF NOT EXISTS idx_sandbox_runs_created ON sandbox_runs(created_at);
 """
 
 

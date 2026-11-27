@@ -1,0 +1,52 @@
+{
+  "basis": "count",
+  "items": [
+    {
+      "rate_from_first": 1.0,
+      "rate_from_prev": 1.0,
+      "stage": "visit",
+      "value": 4
+    },
+    {
+      "rate_from_first": 0.5,
+      "rate_from_prev": 0.5,
+      "stage": "cart",
+      "value": 2
+    },
+    {
+      "rate_from_first": 0.5,
+      "rate_from_prev": 1.0,
+      "stage": "pay",
+      "value": 2
+    }
+  ],
+  "table": {
+    "columns": [
+      "阶段",
+      "值",
+      "相对首环节",
+      "相对上一环节"
+    ],
+    "rows": [
+      [
+        "visit",
+        4,
+        "100.00%",
+        "100.00%"
+      ],
+      [
+        "cart",
+        2,
+        "50.00%",
+        "50.00%"
+      ],
+      [
+        "pay",
+        2,
+        "50.00%",
+        "100.00%"
+      ]
+    ]
+  },
+  "value_column": ""
+}

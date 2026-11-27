@@ -1,0 +1,57 @@
+{
+  "alpha": 0.05,
+  "alternative": "two-sided",
+  "baseline": {
+    "label": "North",
+    "n": 4,
+    "role": "baseline",
+    "std": 0.5,
+    "successes": 3,
+    "value": 0.75
+  },
+  "ci": {
+    "high": 0.398197,
+    "level": 0.95,
+    "low": -0.898197
+  },
+  "diff": -0.25,
+  "effect_size": -0.523599,
+  "metric_type": "proportion",
+  "p_value": 0.465209,
+  "relative_lift": -0.333333,
+  "significant": false,
+  "table": {
+    "columns": [
+      "组别",
+      "样本数",
+      "转化率",
+      "标准差",
+      "成功数"
+    ],
+    "rows": [
+      [
+        "North",
+        4,
+        0.75,
+        0.5,
+        3
+      ],
+      [
+        "South",
+        4,
+        0.5,
+        0.57735,
+        2
+      ]
+    ]
+  },
+  "test": "two_proportion_z",
+  "treatment": {
+    "label": "South",
+    "n": 4,
+    "role": "treatment",
+    "std": 0.57735,
+    "successes": 2,
+    "value": 0.5
+  }
+}

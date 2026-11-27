@@ -15,16 +15,28 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
+from backend.analysis.models import AnalysisError, AnalysisRunRequest
+from backend.analysis.service import AnalysisService
+from backend.audit.service import AuditService
+from backend.catalog.importer import import_financedatabase
+from backend.catalog.models import CatalogError, CatalogQuery
+from backend.catalog.store import CatalogStore
 from backend.config import Settings, load_settings
 from backend.data.calendar import TradeCalendar
 from backend.data.precompute import PrecomputeService
 from backend.data.ratelimit import TokenBucket
 from backend.data.snapshot import SnapshotService
+from backend.datasets.models import (
+    DatasetError,
+    DatasetLimitError,
+    DatasetNotFoundError,
+)
+from backend.datasets.service import DatasetService
 from backend.db import AsyncDatabase, Database
 from backend.engine.askuser import AskUserManager
 from backend.engine.debate import DebateOrchestrator
@@ -32,6 +44,9 @@ from backend.engine.events import StreamHub
 from backend.engine.gateway import CostLedger, LLMGateway
 from backend.engine.prompts import DISCLAIMER
 from backend.engine.react import ChatTask, ReActEngine
+from backend.engine.run_state import RunBudget
+from backend.engine.runs import RunStore
+from backend.engine.tool_calls import ToolCallStore
 from backend.execution import (
     CapitalGate,
     ExecutionStore,
@@ -66,6 +81,26 @@ from backend.memory.summarize import (
 from backend.quant.audit_store import AuditStore
 from backend.quant.compliance import EQUITY_CAPS, review_advice
 from backend.quant.portfolio import PortfolioOptimizer
+from backend.query.engine import (
+    QueryAuditStore,
+    QueryEngine,
+    QueryExecutionError,
+    QueryTimeoutError,
+)
+from backend.query.guard import SqlGuardError
+from backend.reports.models import (
+    ReportAuditError,
+    ReportComposeRequest,
+    ReportError,
+)
+from backend.reports.service import MEDIA_TYPES, ReportService
+from backend.sandbox.models import (
+    SandboxDisabledError,
+    SandboxError,
+    SandboxNotFoundError,
+    SandboxValidationError,
+)
+from backend.sandbox.service import SandboxService
 from backend.security.keyring_loader import load_key, missing_required_keys
 from backend.security.logmask import SensitiveFilter, mask_result_for_storage
 from backend.security.tokens import generate_token, verify_token
@@ -78,6 +113,17 @@ from backend.tools.advisor import (
     PortfolioParams,
     profile_for_level,
     score_answers,
+)
+from backend.tools.data import (
+    AnalysisModulesParams,
+    AnalysisRunParams,
+    CatalogSearchParams,
+    DatasetListParams,
+    DatasetProfileParams,
+    DataTools,
+    ReportComposeParams,
+    SandboxRunParams,
+    SqlQueryParams,
 )
 from backend.tools.market import KlineParams, MarketTools, QuoteParams
 from backend.tools.quant import BacktestParams, FactorParams, QuantTools, WalkForwardParams
@@ -133,6 +179,28 @@ def _norm_symbol(raw: str) -> str:
     return sym
 
 
+class CatalogImportRequest(BaseModel):
+    """本地 FinanceDatabase 目录导入（仅回环/本机模式开放）。"""
+
+    path: str = Field(..., min_length=1, max_length=500)
+    as_of: str = Field("", max_length=10, pattern=r"^(\d{4}-\d{2}-\d{2})?$")
+    source_version: str = Field("", max_length=80)
+    force: bool = False
+
+
+class SqlQueryRequest(BaseModel):
+    sql: str = Field(..., min_length=1, max_length=20000)
+    dataset_id: str = Field("", max_length=64)
+    limit: int = Field(200, ge=1, le=50000)
+
+
+class SandboxRunRequest(BaseModel):
+    """自由代码沙箱请求：默认关闭，开启后仍受 AST/进程/资源三重限制。"""
+
+    code: str = Field(..., min_length=1, max_length=20000)
+    dataset_ids: list[str] = Field(default_factory=list, max_length=5)
+
+
 class AdvisorAssessRequest(BaseModel):
     answers: list[dict] = Field(..., min_length=5, max_length=5)
 
@@ -170,6 +238,21 @@ class AppContext:
         self.sessions = SessionStore(self.db)
         self.decisions = DecisionStore(self.db)
         self.optimizer = PortfolioOptimizer()
+        # M1-M3 数据基座：版本化标的目录 + 不可变数据集 + 只读 SQL
+        self.catalog = CatalogStore(self.db)
+        self.datasets = DatasetService(self.db, settings)
+        self.query_audit = QueryAuditStore(self.db)
+        self.query = QueryEngine(
+            self.datasets, self.query_audit, settings.datasets.workspace_dir,
+            max_rows=settings.datasets.query_max_rows,
+            timeout_seconds=settings.datasets.query_timeout_seconds)
+        self.analysis = AnalysisService(self.datasets, settings)
+        self.audit = AuditService(self.db, settings)
+        self.reports = ReportService(self.db, settings, self.analysis,
+                                     self.query, audit=self.audit)
+        self.sandbox = SandboxService(self.db, settings, self.datasets)
+        self.data_tools = DataTools(self.catalog, self.datasets, self.query,
+                                    self.analysis, self.reports)
         # M7 信号 / M10 仿真执行（进程内单账户，重启即重置——教学演示语义）
         self.signal_store = SignalStore(self.db)
         self.broker = PaperBroker()
@@ -185,6 +268,8 @@ class AppContext:
         except Exception:
             logger.exception("实盘通道装配失败（保持关闭）")
         self.registry = ToolRegistry()
+        self.run_store = RunStore(self.db)
+        self.tool_store = ToolCallStore(self.db)
         self.advisor = None
         self.search = None
         self.gateway: LLMGateway | None = None
@@ -220,6 +305,26 @@ class AppContext:
         async def ask_risk_stub(question: str, options: list[str], context: dict | None = None):
             return {"ok": False,
                     "error": "ask_risk_question 由引擎拦截处理，不应执行到此"}
+
+        async def run_sandbox_code(code: str, dataset_ids: list[str] | None = None):
+            try:
+                result = await asyncio.to_thread(
+                    self.sandbox.run, code, dataset_ids or [])
+            except SandboxError as e:
+                return {"ok": False, "error": str(e), "code": e.code,
+                        "hint": e.hint}
+            return {
+                "ok": result["status"] == "ok",
+                "run_id": result["run_id"],
+                "status": result["status"],
+                "result": result["result"],
+                "stdout": result["stdout"],
+                "stderr": result["stderr"],
+                "error": result["error"],
+                "files": result["files"],
+                "datasets": result["datasets"],
+                "hint": "自由代码结果需与确定性工具/SQL 结果交叉核对后再进入报告。",
+            }
 
         reg.register(ToolSpec(
             "get_quote", "查询 A 股实时快照（现价/涨跌幅/量比/换手/市值/PE/PB）。"
@@ -279,12 +384,68 @@ class AppContext:
             "submit_paper_order", "提交仿真委托（不涉及真实资金）。必须经 G1 适当性 / "
             "G2 资金仓位闸；仅在用户明确要求交易时调用，成交价由服务端快照决定。",
             PaperOrderToolParams, trading.submit_paper_order, compressor="raw",
-            parallel_safe=False))
+            parallel_safe=False, side_effect="external",
+            confirmation="explicit_request"))
+        reg.register(ToolSpec(
+            "catalog_search", "检索标的目录（代码/名称/行业/交易所），返回 instrument_id、"
+            "资产类别与上市状态。目录只回答“存在哪些标的”，不含行情；"
+            "行情/财务请继续调用 get_quote/get_kline/get_financial。",
+            CatalogSearchParams, self.data_tools.catalog_search,
+            compressor="raw", parallel_safe=True))
+        reg.register(ToolSpec(
+            "dataset_list", "列出已导入数据集：dataset_id、SQL 表名 table_name、行列数。"
+            "查询前先用本工具确认表名。",
+            DatasetListParams, self.data_tools.dataset_list,
+            compressor="raw", parallel_safe=True))
+        reg.register(ToolSpec(
+            "dataset_profile", "查看数据集画像：列类型、缺失数/缺失率、唯一值数、"
+            "数值分位与样本行。写分析/报告前先用本工具核对列语义。",
+            DatasetProfileParams, self.data_tools.dataset_profile,
+            compressor="raw", parallel_safe=True))
+        reg.register(ToolSpec(
+            "sql_query", "对已导入数据集执行单条只读 SELECT/WITH 查询。表名使用 "
+            "dataset_list 返回的 table_name；禁止 DDL/DML/ATTACH/文件函数；"
+            "默认最多返回 100 行。报告引用数字须保留 result_hash 以便证据回放。",
+            SqlQueryParams, self.data_tools.sql_query,
+            compressor="raw", parallel_safe=True))
+        reg.register(ToolSpec(
+            "analysis_modules", "列出内置分析模块及参数说明：描述统计/缺失/相关/"
+            "趋势/分组/漏斗/A-B。调用 analysis_run 前先用本工具确认模块名与参数。",
+            AnalysisModulesParams, self.data_tools.analysis_modules,
+            compressor="raw", parallel_safe=True))
+        reg.register(ToolSpec(
+            "analysis_run", "运行内置确定性分析模块，返回统计结果、可复现 result_hash "
+            "与 ECharts chart spec。列名来自 dataset_profile；不要用自由代码计算。",
+            AnalysisRunParams, self.data_tools.analysis_run,
+            compressor="raw", parallel_safe=True))
+        reg.register(ToolSpec(
+            "report_compose", "把分析/SQL/文本块组合为报告，生成 HTML/Word/Excel 到"
+            " data/reports，并返回每块的数据集 sha 与 result_hash。"
+            "仅在用户明确要求“生成/导出报告”时调用；分析块会重新执行以保证可复现。",
+            ReportComposeParams, self.data_tools.report_compose,
+            compressor="raw", parallel_safe=False,
+            side_effect="workspace", confirmation="explicit_request"))
+
+        if s.sandbox.enabled:
+            reg.register(ToolSpec(
+                "run_sandbox_code", "在独立隔离 worker 中运行自由 Python 代码，"
+                "用于内置分析模块与 SQL 无法覆盖的定制计算。代码通过 datasets 字典"
+                "（键为数据集名/表名）获取 DataFrame，可用 pd/np，用 "
+                "save_output(filename, content) 输出 csv/json/txt/md，把最终结论赋给 "
+                "result。禁止文件、网络、系统调用与外部进程；默认超时/内存/输出均有限额。"
+                "仅在用户明确要求“运行代码/写代码计算”时调用。",
+                SandboxRunParams, run_sandbox_code, compressor="raw",
+                parallel_safe=False, side_effect="workspace",
+                confirmation="explicit_request",
+                timeout_seconds=int(s.sandbox.timeout_seconds) + 15))
 
         ledger = CostLedger(self.adb, s.llm.daily_cost_cap_cny)
         self.gateway = LLMGateway(s, ledger, glm_key, deepseek_key)
         self.ask_manager = AskUserManager(self.db, s.server.ask_user_timeout_seconds)
-        self.react = ReActEngine(self.gateway, reg, self.ask_manager)
+        self.react = ReActEngine(
+            self.gateway, reg, self.ask_manager,
+            budget=RunBudget.from_config(s.agent, max_rounds=s.llm.max_rounds),
+            run_store=self.run_store, tool_store=self.tool_store)
         self.debate = DebateOrchestrator(self.gateway, reg, s.llm.debate_rounds)
 
         # 快照预计算 fetcher 接到 market 工具
@@ -392,12 +553,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         missing = missing_required_keys()
         return {
             "status": "ok" if not missing else "degraded",
+            "version": app.version,
             "missing_keys": missing,
             "demo_mode": settings.app.demo_mode,
             "lan_mode": settings.app.lan_mode,
             "snapshot": {"as_of": ctx.snapshot.as_of,
                          "source": ctx.snapshot._source,
                          **ctx.snapshot.freshness()},
+            "catalog": {"instruments": ctx.catalog.count(),
+                        "snapshots": len(ctx.catalog.snapshots(5))},
+            "datasets": {"count": ctx.datasets.store.count()},
+            "analysis": {"modules": len(ctx.analysis.modules())},
+            "reports": {"count": ctx.reports.store.count()},
+            "agent": {"runs": ctx.run_store.count(),
+                      "side_effects": ctx.registry.side_effect_map()},
+            "sandbox": {"enabled": settings.sandbox.enabled,
+                        "runs": ctx.sandbox.count()},
+            "data_dirs": {"catalog": settings.catalog.dir,
+                          "datasets": settings.datasets.dir,
+                          "workspaces": settings.datasets.workspace_dir},
             "disclaimer": DISCLAIMER,
         }
 
@@ -427,6 +601,282 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def decision_history(symbol: str):
         return {"decisions": ctx.decisions.history_for(symbol.zfill(6)),
                 "disclaimer": DISCLAIMER}
+
+    # ---------- M1 标的目录 ----------
+
+    @app.get("/api/catalog/search")
+    async def catalog_search(
+            q: str = Query("", max_length=100),
+            symbol: str = Query("", max_length=32),
+            asset_class: str = Query("", max_length=20),
+            exchange: str = Query("", max_length=16),
+            industry: str = Query("", max_length=80),
+            country: str = Query("", max_length=80),
+            listing_status: str = Query("active", max_length=16),
+            limit: int = Query(50, ge=1, le=200),
+            offset: int = Query(0, ge=0)):
+        params = CatalogQuery(
+            query=q, symbol=symbol, asset_class=asset_class, exchange=exchange,
+            industry=industry, country=country, listing_status=listing_status,
+            limit=limit, offset=offset)
+        return {**ctx.catalog.search(params), "disclaimer": DISCLAIMER}
+
+    @app.get("/api/catalog/stats")
+    async def catalog_stats():
+        return {**ctx.catalog.stats(), "snapshots": ctx.catalog.snapshots(20),
+                "disclaimer": DISCLAIMER}
+
+    @app.get("/api/catalog/instruments/{instrument_id}")
+    async def catalog_instrument(instrument_id: str):
+        item = ctx.catalog.get(instrument_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail=f"标的不存在: {instrument_id}")
+        return {"instrument": item, "aliases": ctx.catalog.aliases(instrument_id),
+                "disclaimer": DISCLAIMER}
+
+    @app.post("/api/catalog/import")
+    async def catalog_import(req: CatalogImportRequest):
+        """导入本地 FinanceDatabase 快照；局域网模式禁用（避免远程读本机路径）。"""
+        if settings.app.lan_mode:
+            raise HTTPException(status_code=403,
+                                detail="局域网模式禁用本地路径导入，请在服务端执行脚本")
+        try:
+            result = await asyncio.to_thread(
+                import_financedatabase, req.path, ctx.catalog,
+                settings.catalog.dir, as_of=req.as_of,
+                source_version=req.source_version, force=req.force)
+        except CatalogError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {**result, "disclaimer": DISCLAIMER}
+
+    # ---------- M2 数据集导入 ----------
+
+    @app.get("/api/datasets")
+    async def dataset_list():
+        items = await asyncio.to_thread(ctx.datasets.list)
+        return {"datasets": items, "count": len(items),
+                "disclaimer": DISCLAIMER}
+
+    @app.post("/api/datasets")
+    async def dataset_upload(file: UploadFile = File(...)):
+        try:
+            result = await asyncio.to_thread(
+                ctx.datasets.import_upload, file.file, file.filename or "upload.csv")
+        except DatasetLimitError as e:
+            raise HTTPException(status_code=413, detail=str(e)) from e
+        except DatasetError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        finally:
+            await file.close()
+        return {**result, "disclaimer": DISCLAIMER}
+
+    @app.get("/api/datasets/{dataset_id}")
+    async def dataset_detail(dataset_id: str):
+        item = await asyncio.to_thread(ctx.datasets.get, dataset_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail=f"数据集不存在: {dataset_id}")
+        return {"dataset": item, "disclaimer": DISCLAIMER}
+
+    @app.get("/api/datasets/{dataset_id}/versions")
+    async def dataset_versions(dataset_id: str):
+        rows = await asyncio.to_thread(ctx.datasets.store.versions, dataset_id)
+        if not rows:
+            raise HTTPException(status_code=404, detail=f"数据集不存在: {dataset_id}")
+        return {"versions": [{
+            "version": r["version"], "sha256": r["sha256"],
+            "created_at": r["created_at"],
+            "rows": (r.get("manifest") or {}).get("rows", 0),
+            "columns": (r.get("manifest") or {}).get("columns", 0),
+        } for r in rows], "disclaimer": DISCLAIMER}
+
+    @app.get("/api/datasets/{dataset_id}/profile")
+    async def dataset_profile(dataset_id: str):
+        try:
+            result = await asyncio.to_thread(ctx.datasets.profile, dataset_id)
+        except DatasetNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except DatasetError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {**result, "disclaimer": DISCLAIMER}
+
+    # ---------- M3 只读 SQL ----------
+
+    @app.get("/api/query/tables")
+    async def query_tables():
+        return {"tables": ctx.query.tables(), "disclaimer": DISCLAIMER}
+
+    @app.post("/api/query")
+    async def run_query(req: SqlQueryRequest):
+        dataset_ids = [req.dataset_id] if req.dataset_id else None
+        try:
+            result = await asyncio.to_thread(
+                ctx.query.execute, req.sql, max_rows=req.limit,
+                dataset_ids=dataset_ids)
+        except SqlGuardError as e:
+            raise HTTPException(status_code=400, detail={
+                "code": e.code, "message": str(e), "hint": e.hint}) from e
+        except QueryTimeoutError as e:
+            raise HTTPException(status_code=504, detail={
+                "code": e.code, "message": str(e), "hint": e.hint}) from e
+        except QueryExecutionError as e:
+            raise HTTPException(status_code=400, detail={
+                "code": e.code, "message": str(e), "hint": e.hint}) from e
+        return {**result, "disclaimer": DISCLAIMER}
+
+    @app.get("/api/query/audit")
+    async def query_audit(limit: int = Query(50, ge=1, le=500)):
+        rows = await asyncio.to_thread(ctx.query_audit.recent, limit)
+        return {"audit": rows, "disclaimer": DISCLAIMER}
+
+    # ---------- P3 自由代码隔离沙箱 ----------
+
+    @app.get("/api/sandbox/status")
+    async def sandbox_status():
+        return {**ctx.sandbox.status(), "disclaimer": DISCLAIMER}
+
+    @app.post("/api/sandbox/run")
+    async def sandbox_run(req: SandboxRunRequest):
+        try:
+            result = await asyncio.to_thread(
+                ctx.sandbox.run, req.code, req.dataset_ids)
+        except SandboxDisabledError as e:
+            raise HTTPException(status_code=403, detail={
+                "code": e.code, "message": str(e), "hint": e.hint}) from e
+        except SandboxValidationError as e:
+            raise HTTPException(status_code=400, detail={
+                "code": e.code, "message": str(e), "hint": e.hint}) from e
+        except SandboxError as e:
+            raise HTTPException(status_code=400, detail={
+                "code": e.code, "message": str(e), "hint": e.hint}) from e
+        return {**result, "disclaimer": DISCLAIMER}
+
+    @app.get("/api/sandbox/runs")
+    async def sandbox_runs(limit: int = Query(50, ge=1, le=200)):
+        rows = await asyncio.to_thread(ctx.sandbox.recent, limit)
+        return {"runs": rows, "count": ctx.sandbox.count(),
+                "disclaimer": DISCLAIMER}
+
+    @app.get("/api/sandbox/runs/{run_id}")
+    async def sandbox_run_detail(run_id: str):
+        try:
+            row = await asyncio.to_thread(ctx.sandbox.get, run_id)
+        except SandboxNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"run": row, "disclaimer": DISCLAIMER}
+
+    @app.get("/api/sandbox/runs/{run_id}/files/{name}")
+    async def sandbox_run_file(run_id: str, name: str):
+        try:
+            path = await asyncio.to_thread(ctx.sandbox.output_path, run_id, name)
+        except SandboxNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return FileResponse(path, filename=name)
+
+    # ---------- M4 分析模块与图表 ----------
+
+    @app.get("/api/analysis/modules")
+    async def analysis_modules():
+        modules = ctx.analysis.modules()
+        return {"modules": modules, "count": len(modules),
+                "disclaimer": DISCLAIMER}
+
+    @app.post("/api/analysis/run")
+    async def analysis_run(req: AnalysisRunRequest):
+        try:
+            result = await asyncio.to_thread(
+                ctx.analysis.run, req.module, req.dataset_id, req.params,
+                req.version)
+        except AnalysisError as e:
+            status = 504 if e.code == "timeout" else 400
+            raise HTTPException(status_code=status, detail={
+                "code": e.code, "message": str(e), "hint": e.hint}) from e
+        return {**result, "disclaimer": DISCLAIMER}
+
+    # ---------- M5 报告与导出 ----------
+
+    @app.get("/api/reports")
+    async def list_reports(limit: int = Query(50, ge=1, le=200)):
+        rows = await asyncio.to_thread(ctx.reports.list, limit)
+        return {"reports": rows, "count": len(rows), "disclaimer": DISCLAIMER}
+
+    @app.post("/api/reports")
+    async def compose_report(req: ReportComposeRequest):
+        try:
+            result = await asyncio.to_thread(ctx.reports.compose, req)
+        except ReportAuditError as e:
+            raise HTTPException(status_code=400, detail={
+                "code": e.code, "message": str(e), "hint": e.hint,
+                "report_id": e.report_id, "audit": e.audit}) from e
+        except ReportError as e:
+            status = 500 if e.code == "render_error" else 400
+            raise HTTPException(status_code=status, detail={
+                "code": e.code, "message": str(e), "hint": e.hint}) from e
+        return {**result, "disclaimer": DISCLAIMER}
+
+    @app.get("/api/reports/{report_id}")
+    async def get_report(report_id: str):
+        try:
+            result = await asyncio.to_thread(ctx.reports.get, report_id)
+        except ReportError as e:
+            raise HTTPException(status_code=404, detail={
+                "code": e.code, "message": str(e), "hint": e.hint}) from e
+        return {**result, "disclaimer": DISCLAIMER}
+
+    @app.get("/api/reports/{report_id}/export/{fmt}")
+    async def export_report(report_id: str,
+                            fmt: Literal["html", "docx", "xlsx"]):
+        try:
+            path, filename = await asyncio.to_thread(
+                ctx.reports.export_path, report_id, fmt)
+        except ReportError as e:
+            raise HTTPException(status_code=404, detail={
+                "code": e.code, "message": str(e), "hint": e.hint}) from e
+        return FileResponse(path, filename=filename,
+                            media_type=MEDIA_TYPES[fmt])
+
+    @app.post("/api/reports/{report_id}/rerun")
+    async def rerun_report(report_id: str):
+        try:
+            result = await asyncio.to_thread(ctx.reports.rerun, report_id)
+        except ReportError as e:
+            raise HTTPException(status_code=400, detail={
+                "code": e.code, "message": str(e), "hint": e.hint}) from e
+        return {**result, "disclaimer": DISCLAIMER}
+
+    # ---------- M7 可信审计 ----------
+
+    @app.get("/api/audit/reports")
+    async def audit_reports(limit: int = Query(50, ge=1, le=200)):
+        rows = await asyncio.to_thread(ctx.reports.list, limit)
+        return {"reports": rows, "count": len(rows),
+                "disclaimer": DISCLAIMER}
+
+    @app.get("/api/audit/reports/{report_id}")
+    async def audit_report_detail(report_id: str):
+        try:
+            report = await asyncio.to_thread(ctx.reports.get, report_id)
+        except ReportError as e:
+            raise HTTPException(status_code=404, detail={
+                "code": e.code, "message": str(e), "hint": e.hint}) from e
+        audit_data = await asyncio.to_thread(ctx.audit.get, report_id)
+        return {**audit_data, "report": report,
+                "audit": report.get("audit") or {},
+                "disclaimer": DISCLAIMER}
+
+    # ---------- M6 Agent 运行记录 ----------
+
+    @app.get("/api/runs")
+    async def list_runs(limit: int = Query(50, ge=1, le=200)):
+        return {"runs": ctx.run_store.recent(limit),
+                "count": ctx.run_store.count(),
+                "disclaimer": DISCLAIMER}
+
+    @app.get("/api/runs/{run_id}")
+    async def get_run(run_id: str):
+        row = ctx.run_store.get(run_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"运行记录不存在: {run_id}")
+        return {"run": row, "disclaimer": DISCLAIMER}
 
     # ---------- M7 信号与组合看板 ----------
 
@@ -693,7 +1143,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if mode == "debate":
                     symbol = _extract_symbol(req.message)
                     runner = asyncio.create_task(
-                        _run_debate(sid, symbol, req.message, stream))
+                        _run_debate_guarded(sid, symbol, req.message, stream))
                 else:
                     runner = asyncio.create_task(ctx.react.run(task, stream))
                 done_seen = False
@@ -705,8 +1155,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         yield stream.publish("ping", {}).sse_format()
                         continue
                     yield ev.sse_format()
-                    if ev.event == "done" or ev.event == "error" and not ev.payload.get("recoverable"):
+                    # M6：只有 done 是终态；error 是过程告警
+                    if ev.event == "done":
                         done_seen = True
+                if not done_seen:
+                    stream.publish("error", {
+                        "code": "NO_TERMINAL", "message": "引擎未发送终态事件",
+                        "recoverable": False})
+                    stream.publish("done", {
+                        "terminal": True, "stop_reason": "no_terminal",
+                        "rounds": 0, "tool_stats": {"calls": 0},
+                        "error": "引擎未发送终态事件", "disclaimer": DISCLAIMER})
                 if runner is not None:
                     try:
                         result = await runner
@@ -725,6 +1184,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers=_sse_headers())
+
+    async def _run_debate_guarded(sid: str, symbol: str, question: str, stream):
+        try:
+            return await _run_debate(sid, symbol, question, stream)
+        except Exception as e:
+            logger.exception("辩论运行异常")
+            stream.publish("error", {
+                "code": "DEBATE_ERROR", "message": str(e), "recoverable": False})
+            stream.publish("done", {
+                "terminal": True, "stop_reason": "debate_error",
+                "mode": "debate", "rounds": 0,
+                "tool_stats": {"calls": 0}, "error": str(e),
+                "disclaimer": DISCLAIMER,
+            })
+            return {"error": str(e)}
 
     async def _run_debate(sid: str, symbol: str, question: str, stream):
         result = await ctx.debate.run(sid, [symbol] if symbol else ["000001"],
@@ -758,6 +1232,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except Exception:
                 logger.exception("决策落库失败")
         stream.publish("done", {
+            "terminal": True, "stop_reason": "debate_answer",
             "usage": {"calls": 1},
             "cost_breakdown": {"note": "分模型聚合见 /api/cost/summary"},
             "rounds": result["debate"].get("rounds", 0) + 1,

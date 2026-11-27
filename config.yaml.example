@@ -47,3 +47,50 @@ memory:
 app:
   demo_mode: false          # DEMO_MODE=1 答辩离线兜底，数据层读冻结卡带
   lan_mode: false           # 局域网模式需显式开启 + 随机 token
+
+catalog:
+  dir: data/catalog         # M1 标的目录快照 manifest
+  search_default_limit: 50
+  search_max_limit: 200
+
+datasets:
+  dir: data/datasets        # M2 不可变 Parquet 快照
+  workspace_dir: data/workspaces  # M3 DuckDB 只读工作区
+  max_file_mb: 200
+  max_rows: 2000000
+  max_columns: 512
+  query_max_rows: 100000
+  query_timeout_seconds: 30
+
+analysis:
+  timeout_seconds: 30
+  max_describe_columns: 50
+  max_correlation_columns: 12
+  max_trend_points: 500
+  max_groups: 10
+
+reports:
+  dir: data/reports          # report spec + HTML/Word/Excel + charts
+  max_blocks: 30
+  max_table_rows: 200        # HTML/Word/Excel 中每块展示行数
+  chart_dpi: 150
+
+agent:
+  context_token_budget: 32000    # 上下文预算（轮次沿用 llm.max_rounds）
+  keep_recent_messages: 12       # 压缩时保留最近消息数
+  tool_result_token_budget: 2000 # 单次工具结果进上下文上限
+  total_tool_token_budget: 12000 # 单轮 run 工具结果总预算
+
+audit:
+  max_evidence: 10000
+  max_claims: 20000
+  tolerance: 1e-06               # 数字匹配相对容差
+
+sandbox:
+  enabled: false                 # P3 自由代码默认关闭；开启需接受残余风险
+  dir: data/sandbox              # 每次运行的 request/result/files
+  timeout_seconds: 10
+  memory_mb: 1024                # Windows Job Object 进程内存上限
+  max_output_mb: 10              # save_output 总量上限
+  max_files: 20
+  max_code_chars: 20000

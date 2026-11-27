@@ -24,6 +24,9 @@ class ToolSpec:
     handler: Callable[..., Awaitable[dict]]
     compressor: str = "raw"        # kline | snapshot | news | financial | backtest | raw
     parallel_safe: bool = True     # 快照读类可并行；搜索类串行防限速
+    side_effect: str = "none"      # none | session | workspace | external
+    confirmation: str = "none"     # none | explicit_request
+    timeout_seconds: int = 60
 
 
 def pydantic_to_openai_schema(name: str, description: str, model: type[BaseModel]) -> dict:
@@ -66,12 +69,33 @@ class ToolRegistry:
     def parallel_safe_names(self) -> set[str]:
         return {n for n, s in self._tools.items() if s.parallel_safe}
 
-    async def execute(self, name: str, raw_args: str) -> dict:
-        """沙箱执行：校验失败返回错误提示（不抛异常）；handler 异常同样包装。"""
+    def side_effect_map(self) -> dict[str, dict]:
+        return {
+            name: {"side_effect": spec.side_effect,
+                   "confirmation": spec.confirmation,
+                   "timeout_seconds": spec.timeout_seconds}
+            for name, spec in self._tools.items()
+        }
+
+    async def execute(self, name: str, raw_args: str, *,
+                      allow_side_effects: bool = True) -> dict:
+        """沙箱执行：校验失败返回错误提示（不抛异常）；handler 异常同样包装。
+
+        `allow_side_effects=False` 时，带 `confirmation=explicit_request` 的
+        副作用工具不执行，返回 requires_confirmation 错误（由编排层决定是否放行）。
+        """
         spec = self._tools.get(name)
         if spec is None:
             return {"ok": False, "error": f"未知工具: {name}",
                     "hint": "请对照工具说明修正后重试"}
+        if spec.confirmation == "explicit_request" and not allow_side_effects:
+            return {
+                "ok": False,
+                "error": f"工具 {name} 需要用户明确授权",
+                "requires_confirmation": True,
+                "side_effect": spec.side_effect,
+                "hint": "请先向用户确认操作意图（交易/生成报告），得到明确指令后再调用",
+            }
         try:
             args = spec.params.model_validate_json(raw_args or "{}")
         except ValidationError as e:

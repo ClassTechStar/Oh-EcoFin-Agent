@@ -1,8 +1,10 @@
-"""SSE v2 事件协议：8 类事件 + 会话级单调递增 id + 环形缓冲重放。
+"""SSE v2 事件协议：会话级单调递增 id + 环形缓冲重放。
 
-事件类型（模块 8 协议表）：
+事件类型：
   message_delta / thinking_delta / tool_call / chart /
-  ask_user / done / error / ping
+  ask_user / run_state / budget / done / error / ping
+
+M6 约定：`done` 是唯一终态（一次 run 恰一个）；`error`/`budget` 是过程事件。
 """
 
 from __future__ import annotations

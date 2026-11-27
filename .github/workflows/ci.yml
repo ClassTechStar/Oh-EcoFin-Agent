@@ -23,6 +23,8 @@ jobs:
         run: |
           pip install ruff==0.14.6
           ruff check backend scripts eval --exit-zero
+      - name: 依赖许可证扫描（GPL 冲突门禁）
+        run: python scripts/check_licenses.py
       - name: 未来函数扫描（零报警门禁）
         run: python scripts/scan_future_functions.py
       - name: 前视偏差截断检验（方法级审计门禁）

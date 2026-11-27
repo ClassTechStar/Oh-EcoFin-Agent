@@ -30,6 +30,18 @@ from backend.execution.models import AccountContext, OrderRequest
 logger = logging.getLogger(__name__)
 
 
+def resolve_http_token(config: ExecutionConfig) -> str:
+    """token 解析：配置优先；为空时回退 Windows 凭据管理器（broker_http_token）。"""
+    if config.http_token:
+        return config.http_token
+    try:
+        from backend.security.keyring_loader import load_key
+
+        return load_key("broker_http_token")
+    except Exception:
+        return ""
+
+
 class HttpBrokerAdapter:
     name = "http"
 
@@ -37,11 +49,12 @@ class HttpBrokerAdapter:
                  transport: httpx.AsyncBaseTransport | None = None):
         self.config = config
         host = (urlparse(config.http_base_url).hostname or "").lower()
+        token = resolve_http_token(config)
         # 本机/回环地址禁用系统代理（避免被代理中间层改写为 502）
         trust_env = host not in ("127.0.0.1", "localhost", "::1")
         self._client = httpx.AsyncClient(
             base_url=config.http_base_url.rstrip("/") if config.http_base_url else "",
-            headers={"Authorization": f"Bearer {config.http_token}"} if config.http_token else {},
+            headers={"Authorization": f"Bearer {token}"} if token else {},
             timeout=float(config.timeout_seconds or 10.0),
             transport=transport,
             trust_env=trust_env,

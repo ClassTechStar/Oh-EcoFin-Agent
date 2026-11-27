@@ -1,0 +1,53 @@
+{
+  "agg": "sum",
+  "bucket": "month",
+  "date_column": "date",
+  "series": [
+    {
+      "counts": [
+        2,
+        1
+      ],
+      "name": "North",
+      "values": [
+        300.0,
+        400.0
+      ]
+    },
+    {
+      "counts": [
+        3,
+        1
+      ],
+      "name": "South",
+      "values": [
+        500.0,
+        100.0
+      ]
+    }
+  ],
+  "table": {
+    "columns": [
+      "时间",
+      "North",
+      "South"
+    ],
+    "rows": [
+      [
+        "2026-01",
+        300.0,
+        500.0
+      ],
+      [
+        "2026-02",
+        400.0,
+        100.0
+      ]
+    ]
+  },
+  "value_column": "amount",
+  "x": [
+    "2026-01",
+    "2026-02"
+  ]
+}

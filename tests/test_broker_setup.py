@@ -6,7 +6,10 @@ import httpx
 from fastapi.testclient import TestClient
 
 from backend.config import ExecutionConfig
+from backend.execution.brokers import resolve_http_token
 from scripts.check_broker_setup import check_http, check_qmt
+from scripts.configure_broker import main as configure_main
+from scripts.configure_broker import upsert_env
 from scripts.mock_broker_gateway import create_mock_app
 
 
@@ -60,3 +63,49 @@ def test_check_http_with_mock_transport():
     down = httpx.MockTransport(lambda request: httpx.Response(503))
     problems = check_http(cfg, transport=down)
     assert problems and "503" in problems[0]
+
+
+def test_resolve_http_token_prefers_config():
+    cfg = ExecutionConfig(http_token="from-config")
+    assert resolve_http_token(cfg) == "from-config"
+
+
+def test_upsert_env_preserves_other_lines(tmp_path):
+    path = tmp_path / ".env"
+    path.write_text("# 注释\nFINAGENT_GLM_KEY=k\n"
+                    "FINAGENT_EXECUTION__BROKER_KIND=qmt\n", encoding="utf-8")
+    upsert_env(path, {
+        "FINAGENT_EXECUTION__BROKER_KIND": "http",
+        "FINAGENT_EXECUTION__HTTP_BASE_URL": "https://broker.example",
+    })
+    text = path.read_text(encoding="utf-8")
+    assert "# 注释" in text and "FINAGENT_GLM_KEY=k" in text
+    assert text.count("FINAGENT_EXECUTION__BROKER_KIND=") == 1
+    assert "FINAGENT_EXECUTION__BROKER_KIND=http" in text
+    assert "FINAGENT_EXECUTION__HTTP_BASE_URL=https://broker.example" in text
+
+
+def test_configure_http_writes_env_without_probe(tmp_path):
+    env_file = tmp_path / ".env"
+    rc = configure_main([
+        "--kind", "http", "--env-file", str(env_file),
+        "--base-url", "https://broker.example", "--account", "1234567890",
+        "--token", "tok-123", "--no-probe", "--store", "file",
+    ])
+    assert rc == 0
+    text = env_file.read_text(encoding="utf-8")
+    assert "FINAGENT_EXECUTION__LIVE_ENABLED=1" in text
+    assert "FINAGENT_EXECUTION__BROKER_KIND=http" in text
+    assert "FINAGENT_EXECUTION__HTTP_BASE_URL=https://broker.example" in text
+    assert "FINAGENT_EXECUTION__HTTP_TOKEN=tok-123" in text
+    assert "FINAGENT_EXECUTION__ACCOUNT_ID=1234567890" in text
+
+
+def test_configure_qmt_rejects_missing_path(tmp_path):
+    env_file = tmp_path / ".env"
+    rc = configure_main([
+        "--kind", "qmt", "--env-file", str(env_file),
+        "--account", "1234567890", "--qmt-path", str(tmp_path / "missing"),
+    ])
+    assert rc == 1
+    assert not env_file.exists()

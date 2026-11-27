@@ -4,7 +4,7 @@
  *  - 服务健康：快照源/截至时间/缺密钥诚实降级提示
  *  - 合规：三层免责声明
  */
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '../sse'
 import { ACCENT_PRESETS, theme, useTheme, type AccentPreset, type ThemeMode } from '../theme/theme'
 import MdCard from '../components/MdCard.vue'
@@ -18,6 +18,11 @@ const { mode, accent } = useTheme()
 const health = ref<any>(null)
 const { show } = useToast()
 const autoRefresh = ref(true)
+
+const sideEffectTools = computed(() => Object.entries(
+  health.value?.agent?.side_effects || {}
+).filter(([, value]: any) => value.side_effect !== 'none')
+  .map(([name, value]: any) => ({ name, ...value })))
 
 const MODE_OPTIONS: { value: ThemeMode; label: string; icon: string }[] = [
   { value: 'light', label: '浅色', icon: 'sun' },
@@ -87,6 +92,35 @@ watch(autoRefresh, (v) => { if (!v) show('定时刷新已关闭（仅演示开�
         </p>
       </MdCard>
 
+      <!-- 数据与审计 -->
+      <MdCard variant="filled" class="setting-card">
+        <h2>数据与审计</h2>
+        <div class="field"><span>版本</span><strong class="num">{{ health?.version || '—' }}</strong></div>
+        <div class="field"><span>标的目录</span><strong>{{ health?.catalog?.instruments ?? 0 }} 个标的</strong></div>
+        <div class="field"><span>数据集</span><strong>{{ health?.datasets?.count ?? 0 }} 个</strong></div>
+        <div class="field"><span>报告</span><strong>{{ health?.reports?.count ?? 0 }} 份</strong></div>
+        <div class="field"><span>Agent 运行</span><strong>{{ health?.agent?.runs ?? 0 }} 次</strong></div>
+        <div class="field path-field">
+          <span>目录快照</span><strong class="path">{{ health?.data_dirs?.catalog || '—' }}</strong>
+        </div>
+        <div class="field path-field">
+          <span>数据集快照</span><strong class="path">{{ health?.data_dirs?.datasets || '—' }}</strong>
+        </div>
+        <div class="field path-field">
+          <span>查询工作区</span><strong class="path">{{ health?.data_dirs?.workspaces || '—' }}</strong>
+        </div>
+        <div class="field">
+          <span>需明确授权的副作用工具</span>
+          <div class="chips-row">
+            <MdChip v-for="tool in sideEffectTools" :key="tool.name" icon="shield">
+              {{ tool.name }} · {{ tool.side_effect }}
+            </MdChip>
+            <span v-if="!sideEffectTools.length" class="muted">无</span>
+          </div>
+        </div>
+        <p class="hint-line">报告导出与 Agent 运行记录分别见「报告」「审计」页；数据目录可用 FINAGENT_* 环境变量覆盖。</p>
+      </MdCard>
+
       <!-- 合规 -->
       <MdCard variant="outlined" class="setting-card">
         <h2>合规声明</h2>
@@ -119,6 +153,9 @@ watch(autoRefresh, (v) => { if (!v) show('定时刷新已关闭（仅演示开�
   color: var(--text-secondary); font-size: 13px;
 }
 .hint-line { margin: var(--space-2) 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
+.path-field { align-items: flex-start; }
+.path { font-size: 11px; color: var(--text-secondary); word-break: break-all; text-align: right; }
+.muted { color: var(--text-muted); font-size: 12px; }
 
 .segmented {
   display: inline-flex; gap: 4px; padding: 4px;

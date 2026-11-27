@@ -69,6 +69,76 @@ class MemoryConfig(BaseSettings):
     keep_recent_rounds: int = 6
 
 
+class CatalogConfig(BaseSettings):
+    """标的目录（M1）：版本化快照落盘 + 检索上限。"""
+
+    dir: str = str(PROJECT_ROOT / "data" / "catalog")
+    import_batch_size: int = 1000
+    search_default_limit: int = 50
+    search_max_limit: int = 200
+
+
+class DatasetConfig(BaseSettings):
+    """数据集导入与查询（M2/M3）：不可变 Parquet 快照 + DuckDB 只读查询。"""
+
+    dir: str = str(PROJECT_ROOT / "data" / "datasets")
+    workspace_dir: str = str(PROJECT_ROOT / "data" / "workspaces")
+    max_file_mb: int = 200
+    max_rows: int = 2_000_000
+    max_columns: int = 512
+    query_max_rows: int = 100_000
+    query_timeout_seconds: int = 30
+    profile_sample_rows: int = 5
+
+
+class AnalysisConfig(BaseSettings):
+    """分析模块（M4）：超时与展示上限。"""
+
+    timeout_seconds: int = 30
+    max_describe_columns: int = 50
+    max_correlation_columns: int = 12
+    max_trend_points: int = 500
+    max_groups: int = 10
+
+
+class ReportsConfig(BaseSettings):
+    """报告与导出（M5）：落盘目录、块数与表格展示上限。"""
+
+    dir: str = str(PROJECT_ROOT / "data" / "reports")
+    max_blocks: int = 30
+    max_table_rows: int = 200
+    chart_dpi: int = 150
+
+
+class AgentConfig(BaseSettings):
+    """Agent 编排（M6）：上下文预算与工具结果预算（轮次沿用 llm.max_rounds）。"""
+
+    context_token_budget: int = 32000
+    keep_recent_messages: int = 12
+    tool_result_token_budget: int = 2000
+    total_tool_token_budget: int = 12000
+
+
+class AuditConfig(BaseSettings):
+    """可信审计（M7）：证据规模与数值匹配容差。"""
+
+    max_evidence: int = 10000
+    max_claims: int = 20000
+    tolerance: float = 1e-6
+
+
+class SandboxConfig(BaseSettings):
+    """自由代码隔离 worker（P3）：默认关闭，显式开启才注册 API/工具。"""
+
+    enabled: bool = False
+    dir: str = str(PROJECT_ROOT / "data" / "sandbox")
+    timeout_seconds: int = 10
+    memory_mb: int = 1024
+    max_output_mb: int = 10
+    max_files: int = 20
+    max_code_chars: int = 20000
+
+
 class AppConfig(BaseSettings):
     demo_mode: bool = False
     lan_mode: bool = False
@@ -106,6 +176,13 @@ class Settings(BaseSettings):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     app: AppConfig = Field(default_factory=AppConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    catalog: CatalogConfig = Field(default_factory=CatalogConfig)
+    datasets: DatasetConfig = Field(default_factory=DatasetConfig)
+    analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
+    reports: ReportsConfig = Field(default_factory=ReportsConfig)
+    agent: AgentConfig = Field(default_factory=AgentConfig)
+    audit: AuditConfig = Field(default_factory=AuditConfig)
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
 
     db_path: str = str(PROJECT_ROOT / "data" / "finagent.db")
     cassette_dir: str = str(PROJECT_ROOT / "data" / "cassettes_frozen")

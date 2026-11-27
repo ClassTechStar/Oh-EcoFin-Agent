@@ -1,0 +1,43 @@
+{
+  "agg": "sum",
+  "group_column": "region",
+  "items": [
+    {
+      "count": 3,
+      "label": "North",
+      "share": 0.538462,
+      "value": 700.0
+    },
+    {
+      "count": 4,
+      "label": "South",
+      "share": 0.461538,
+      "value": 600.0
+    }
+  ],
+  "table": {
+    "columns": [
+      "分组",
+      "值",
+      "样本数",
+      "占比"
+    ],
+    "rows": [
+      [
+        "North",
+        700.0,
+        3,
+        "53.85%"
+      ],
+      [
+        "South",
+        600.0,
+        4,
+        "46.15%"
+      ]
+    ]
+  },
+  "total_rows": 7,
+  "truncated": false,
+  "value_column": "amount"
+}

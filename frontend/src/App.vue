@@ -4,6 +4,10 @@
 import { ref } from 'vue'
 import AppShell from './layouts/AppShell.vue'
 import ChatView from './views/ChatView.vue'
+import DataView from './views/DataView.vue'
+import DataHubView from './views/DataHubView.vue'
+import ReportsView from './views/ReportsView.vue'
+import AuditView from './views/AuditView.vue'
 import TradingView from './views/TradingView.vue'
 import AdvisorView from './views/AdvisorView.vue'
 import CostView from './views/CostView.vue'
@@ -15,6 +19,10 @@ const active = ref('chat')
 
 const VIEWS: Record<string, unknown> = {
   chat: ChatView,
+  analysis: DataView,
+  data: DataHubView,
+  reports: ReportsView,
+  audit: AuditView,
   trading: TradingView,
   advisor: AdvisorView,
   cost: CostView,

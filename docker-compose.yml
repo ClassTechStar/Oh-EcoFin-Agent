@@ -1,0 +1,27 @@
+services:
+  app:
+    build: .
+    image: oh-ecofin-agent:local
+    container_name: oh-ecofin-agent
+    ports:
+      - "127.0.0.1:8765:8765"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      FINAGENT_SERVER__HOST: 0.0.0.0
+      FINAGENT_DB_PATH: /app/data/finagent.db
+      FINAGENT_CATALOG__DIR: /app/data/catalog
+      FINAGENT_DATASETS__DIR: /app/data/datasets
+      FINAGENT_DATASETS__WORKSPACE_DIR: /app/data/workspaces
+      FINAGENT_REPORTS__DIR: /app/data/reports
+      FINAGENT_SANDBOX__DIR: /app/data/sandbox
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

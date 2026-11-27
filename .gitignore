@@ -18,6 +18,10 @@ venv/
 *.db-shm
 data/cache/
 data/cassettes_frozen/
+data/catalog/
+data/datasets/
+data/workspaces/
+data/reports/
 logs/
 dist/
 build/

@@ -15,7 +15,10 @@ function shortArgs(args: string): string {
 }
 
 function pretty(t: any): string {
-  return `▶ ${t.name}(${t.args || '{}'})` + (t.result_digest ? `\n◀ ${t.result_digest}` : '')
+  let text = `▶ ${t.name}(${t.args || '{}'})`
+  if (t.result_digest) text += `\n◀ ${t.result_digest}`
+  if (t.error) text += `\n✖ ${t.error}${t.hint ? `（${t.hint}）` : ''}`
+  return text
 }
 
 defineProps<{ tools: any[] }>()
@@ -28,6 +31,8 @@ defineProps<{ tools: any[] }>()
         <span>{{ statusIcon(t.status) }}</span>
         <strong>{{ t.name }}</strong>
         <span class="args num">{{ shortArgs(t.args) }}</span>
+        <span v-if="t.requires_confirmation" class="confirm">需确认</span>
+        <span v-else-if="t.side_effect && t.side_effect !== 'none'" class="effect">{{ t.side_effect }}</span>
         <span v-if="t.ms != null" class="num">{{ t.ms }}ms</span>
         <span v-if="t.cached" class="cached">缓存</span>
       </summary>
@@ -40,4 +45,6 @@ defineProps<{ tools: any[] }>()
 .timeline { display: flex; flex-direction: column; gap: 2px; }
 .args { color: var(--text-3); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cached { color: var(--ok); font-size: 11px; }
+.confirm { color: var(--warn); font-size: 11px; font-weight: 600; }
+.effect { color: var(--text-3); font-size: 10px; text-transform: uppercase; }
 </style>

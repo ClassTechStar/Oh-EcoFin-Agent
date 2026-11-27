@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from backend.config import ExecutionConfig, load_settings  # noqa: E402
-from backend.execution.brokers import mask_account  # noqa: E402
+from backend.execution.brokers import mask_account, resolve_http_token  # noqa: E402
 
 
 def check_qmt(cfg: ExecutionConfig) -> list[str]:
@@ -49,7 +49,8 @@ def check_http(cfg: ExecutionConfig, *,
                timeout: float | None = None) -> list[str]:
     if not cfg.http_base_url:
         return ["缺少网关地址：FINAGENT_EXECUTION__HTTP_BASE_URL"]
-    headers = {"Authorization": f"Bearer {cfg.http_token}"} if cfg.http_token else {}
+    headers = ({"Authorization": f"Bearer {resolve_http_token(cfg)}"}
+               if resolve_http_token(cfg) else {})
     host = (urlparse(cfg.http_base_url).hostname or "").lower()
     try:
         with httpx.Client(

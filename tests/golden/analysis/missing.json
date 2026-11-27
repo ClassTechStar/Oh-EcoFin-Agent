@@ -1,0 +1,89 @@
+{
+  "columns": [
+    {
+      "dtype": "BIGINT",
+      "name": "amount",
+      "null_count": 1,
+      "null_ratio": 0.125
+    },
+    {
+      "dtype": "BIGINT",
+      "name": "converted",
+      "null_count": 0,
+      "null_ratio": 0.0
+    },
+    {
+      "dtype": "DATE",
+      "name": "date",
+      "null_count": 0,
+      "null_ratio": 0.0
+    },
+    {
+      "dtype": "BIGINT",
+      "name": "qty",
+      "null_count": 0,
+      "null_ratio": 0.0
+    },
+    {
+      "dtype": "VARCHAR",
+      "name": "region",
+      "null_count": 0,
+      "null_ratio": 0.0
+    },
+    {
+      "dtype": "VARCHAR",
+      "name": "stage",
+      "null_count": 0,
+      "null_ratio": 0.0
+    }
+  ],
+  "columns_with_missing": 1,
+  "rows": 8,
+  "table": {
+    "columns": [
+      "字段",
+      "类型",
+      "缺失数",
+      "缺失率"
+    ],
+    "rows": [
+      [
+        "amount",
+        "BIGINT",
+        1,
+        "12.50%"
+      ],
+      [
+        "converted",
+        "BIGINT",
+        0,
+        "0.00%"
+      ],
+      [
+        "date",
+        "DATE",
+        0,
+        "0.00%"
+      ],
+      [
+        "qty",
+        "BIGINT",
+        0,
+        "0.00%"
+      ],
+      [
+        "region",
+        "VARCHAR",
+        0,
+        "0.00%"
+      ],
+      [
+        "stage",
+        "VARCHAR",
+        0,
+        "0.00%"
+      ]
+    ]
+  },
+  "total_missing": 1
+}

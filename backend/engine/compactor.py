@@ -210,6 +210,120 @@ def compact_backtest(result: dict) -> dict:
     return out
 
 
+# ---------- 数据/分析/报告工具压缩（M6） ----------
+
+def _compact_table(table: dict | None, limit: int = 20) -> dict:
+    table = table or {}
+    rows = table.get("rows") or []
+    return {
+        "columns": table.get("columns") or [],
+        "rows": rows[:limit],
+        "row_count": len(rows),
+        "truncated": len(rows) > limit,
+    }
+
+
+def compact_catalog_search(result: dict) -> dict:
+    items = result.get("items") or []
+    keys = ("instrument_id", "symbol", "name", "asset_class", "exchange",
+            "sector", "industry", "country", "listing_status")
+    return {
+        "ok": result.get("ok", True),
+        "total": result.get("total", len(items)),
+        "items": [{key: item.get(key) for key in keys} for item in items[:10]],
+        "truncated": len(items) > 10,
+        "hint": result.get("hint", ""),
+    }
+
+
+def compact_dataset_list(result: dict) -> dict:
+    datasets = result.get("datasets") or []
+    keys = ("dataset_id", "name", "table_name", "version", "rows", "columns", "sha256")
+    return {
+        "ok": result.get("ok", True),
+        "count": result.get("count", len(datasets)),
+        "datasets": [{key: d.get(key) for key in keys} for d in datasets[:20]],
+        "truncated": len(datasets) > 20,
+        "hint": result.get("hint", ""),
+    }
+
+
+def compact_dataset_profile(result: dict) -> dict:
+    profile = result.get("profile") or []
+    keys = ("name", "dtype", "null_count", "null_ratio", "distinct_count",
+            "min", "max", "p25", "p50", "p75")
+    schema = result.get("schema") or {}
+    return {
+        "ok": result.get("ok", True),
+        "dataset_id": result.get("dataset_id"),
+        "name": result.get("name"),
+        "version": result.get("version"),
+        "rows": result.get("rows"),
+        "columns": result.get("columns"),
+        "schema": dict(list(schema.items())[:50]),
+        "schema_truncated": len(schema) > 50,
+        "profiled_columns": result.get("profiled_columns"),
+        "truncated_columns": result.get("truncated_columns"),
+        "profile": [{key: col.get(key) for key in keys} for col in profile[:20]],
+        "truncated": len(profile) > 20,
+    }
+
+
+def compact_sql(result: dict) -> dict:
+    rows = result.get("rows") or []
+    return {
+        "ok": result.get("ok", True),
+        "columns": result.get("columns") or [],
+        "rows": rows[:20],
+        "row_count": result.get("row_count", len(rows)),
+        "truncated": bool(result.get("truncated")) or len(rows) > 20,
+        "sql_hash": result.get("sql_hash"),
+        "result_hash": result.get("result_hash"),
+        "datasets": result.get("datasets") or [],
+        "hint": result.get("hint", ""),
+    }
+
+
+def compact_analysis(result: dict) -> dict:
+    data = result.get("data") or {}
+    chart = result.get("chart") or {}
+    summary = {key: value for key, value in data.items()
+               if key not in ("table", "x", "series", "matrix", "items", "columns")}
+    return {
+        "ok": result.get("ok", True),
+        "module": result.get("module"),
+        "label": result.get("label"),
+        "dataset": result.get("dataset"),
+        "params": result.get("params"),
+        "warnings": result.get("warnings") or [],
+        "result_hash": result.get("result_hash"),
+        "chart": {key: chart.get(key) for key in
+                  ("chart_type", "title", "spec_hash", "result_hash")} if chart else None,
+        "summary": summary,
+        "table": _compact_table(data.get("table"), limit=20),
+    }
+
+
+def compact_report(result: dict) -> dict:
+    blocks = result.get("blocks") or []
+    return {
+        "ok": result.get("ok", True),
+        "report_id": result.get("report_id"),
+        "title": result.get("title"),
+        "spec_hash": result.get("spec_hash"),
+        "files": result.get("files") or [],
+        "datasets": result.get("datasets") or [],
+        "sources": [{key: source.get(key) for key in
+                     ("block_id", "block_title", "type", "result_hash",
+                      "chart_spec_hash", "sql_hash", "dataset_sha256")}
+                    for source in (result.get("sources") or [])],
+        "blocks": [{key: block.get(key) for key in
+                    ("id", "type", "title", "source")}
+                   for block in blocks],
+        "hint": result.get("hint", ""),
+    }
+
+
 # ---------- 分发 ----------
 
 COMPACTORS = {
@@ -218,6 +332,12 @@ COMPACTORS = {
     "search_news": compact_news,
     "get_financial": compact_financial,
     "run_backtest": compact_backtest,
+    "catalog_search": compact_catalog_search,
+    "dataset_list": compact_dataset_list,
+    "dataset_profile": compact_dataset_profile,
+    "sql_query": compact_sql,
+    "analysis_run": compact_analysis,
+    "report_compose": compact_report,
 }
 
 

@@ -21,6 +21,10 @@ const railOpen = ref(false)
 
 const NAV = [
   { id: 'chat', label: '投研对话', icon: 'chat' },
+  { id: 'analysis', label: '数据分析', icon: 'analysis' },
+  { id: 'data', label: '数据', icon: 'data' },
+  { id: 'reports', label: '报告', icon: 'report' },
+  { id: 'audit', label: '审计', icon: 'audit' },
   { id: 'trading', label: '交易看板', icon: 'trading' },
   { id: 'advisor', label: '投顾合规', icon: 'shield' },
   { id: 'cost', label: '成本看板', icon: 'dashboard' },
@@ -168,7 +172,7 @@ onMounted(async () => {
   background: var(--md-surface-container-lowest);
   border-right: 1px solid var(--border-subtle);
   transition: width var(--motion-settle);
-  overflow: hidden;
+  overflow-x: hidden; overflow-y: auto;
 }
 .rail--expanded { width: 188px; align-items: stretch; }
 .rail__item {
@@ -215,13 +219,16 @@ onMounted(async () => {
   height: 64px; flex: 0 0 auto;
   background: var(--md-surface-container);
   border-top: 1px solid var(--border-subtle);
+  overflow-x: auto; scrollbar-width: none;
 }
+.navbar::-webkit-scrollbar { display: none; }
 .navbar__item {
-  flex: 1; display: flex; flex-direction: column; align-items: center;
+  flex: 0 0 58px; display: flex; flex-direction: column; align-items: center;
   gap: 2px; padding-top: 8px;
   color: var(--text-secondary);
-  font-size: 11px; font-weight: 500;
+  font-size: 10px; font-weight: 500;
 }
+.navbar__label { white-space: nowrap; }
 .navbar__indicator {
   width: 56px; height: 30px;
   display: grid; place-items: center;

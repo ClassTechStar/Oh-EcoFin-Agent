@@ -1,0 +1,251 @@
+{
+  "categorical_count": 3,
+  "columns": [
+    {
+      "count": 8,
+      "distinct_count": 5,
+      "dtype": "DATE",
+      "kind": "categorical",
+      "max": null,
+      "mean": null,
+      "min": null,
+      "name": "date",
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "p25": null,
+      "p50": null,
+      "p75": null,
+      "std": null,
+      "top_values": [
+        {
+          "count": 2,
+          "value": "2026-01-01"
+        },
+        {
+          "count": 2,
+          "value": "2026-01-02"
+        },
+        {
+          "count": 2,
+          "value": "2026-01-03"
+        },
+        {
+          "count": 1,
+          "value": "2026-02-01"
+        },
+        {
+          "count": 1,
+          "value": "2026-02-02"
+        }
+      ]
+    },
+    {
+      "count": 8,
+      "distinct_count": 2,
+      "dtype": "VARCHAR",
+      "kind": "categorical",
+      "max": null,
+      "mean": null,
+      "min": null,
+      "name": "region",
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "p25": null,
+      "p50": null,
+      "p75": null,
+      "std": null,
+      "top_values": [
+        {
+          "count": 4,
+          "value": "North"
+        },
+        {
+          "count": 4,
+          "value": "South"
+        }
+      ]
+    },
+    {
+      "count": 7,
+      "distinct_count": 6,
+      "dtype": "BIGINT",
+      "kind": "numeric",
+      "max": 400.0,
+      "mean": 185.714286,
+      "min": 50.0,
+      "name": "amount",
+      "null_count": 1,
+      "null_ratio": 0.125,
+      "p25": 100.0,
+      "p50": 150.0,
+      "p75": 250.0,
+      "std": 124.880896
+    },
+    {
+      "count": 8,
+      "distinct_count": 5,
+      "dtype": "BIGINT",
+      "kind": "numeric",
+      "max": 5.0,
+      "mean": 2.375,
+      "min": 1.0,
+      "name": "qty",
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "p25": 1.0,
+      "p50": 2.0,
+      "p75": 3.25,
+      "std": 1.505941
+    },
+    {
+      "count": 8,
+      "distinct_count": 2,
+      "dtype": "BIGINT",
+      "kind": "numeric",
+      "max": 1.0,
+      "mean": 0.625,
+      "min": 0.0,
+      "name": "converted",
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "p25": 0.0,
+      "p50": 1.0,
+      "p75": 1.0,
+      "std": 0.517549
+    },
+    {
+      "count": 8,
+      "distinct_count": 3,
+      "dtype": "VARCHAR",
+      "kind": "categorical",
+      "max": null,
+      "mean": null,
+      "min": null,
+      "name": "stage",
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "p25": null,
+      "p50": null,
+      "p75": null,
+      "std": null,
+      "top_values": [
+        {
+          "count": 4,
+          "value": "visit"
+        },
+        {
+          "count": 2,
+          "value": "cart"
+        },
+        {
+          "count": 2,
+          "value": "pay"
+        }
+      ]
+    }
+  ],
+  "numeric_count": 3,
+  "rows": 8,
+  "table": {
+    "columns": [
+      "字段",
+      "类型",
+      "非空",
+      "缺失",
+      "唯一值",
+      "均值",
+      "标准差",
+      "最小",
+      "P25",
+      "中位数",
+      "P75",
+      "最大"
+    ],
+    "rows": [
+      [
+        "date",
+        "DATE",
+        8,
+        0,
+        5,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      [
+        "region",
+        "VARCHAR",
+        8,
+        0,
+        2,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      [
+        "amount",
+        "BIGINT",
+        7,
+        1,
+        6,
+        185.714286,
+        124.880896,
+        50.0,
+        100.0,
+        150.0,
+        250.0,
+        400.0
+      ],
+      [
+        "qty",
+        "BIGINT",
+        8,
+        0,
+        5,
+        2.375,
+        1.505941,
+        1.0,
+        1.0,
+        2.0,
+        3.25,
+        5.0
+      ],
+      [
+        "converted",
+        "BIGINT",
+        8,
+        0,
+        2,
+        0.625,
+        0.517549,
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      [
+        "stage",
+        "VARCHAR",
+        8,
+        0,
+        3,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    ]
+  }
+}

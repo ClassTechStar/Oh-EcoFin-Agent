@@ -21,6 +21,36 @@ const props = defineProps<{ name: string; size?: number | string }>()
       <rect x="3.5" y="16" width="7.5" height="4.5" rx="2" stroke="currentColor" stroke-width="1.8" />
       <rect x="13" y="12" width="7.5" height="8.5" rx="2" stroke="currentColor" stroke-width="1.8" />
     </template>
+    <!-- analysis（柱状图） -->
+    <template v-else-if="name === 'analysis'">
+      <path d="M4 20V11M9.3 20V6M14.7 20v-6M20 20V3.5" stroke="currentColor"
+            stroke-width="2.4" stroke-linecap="round" />
+      <path d="M2.5 20h19" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+    </template>
+    <!-- report（文档） -->
+    <template v-else-if="name === 'report'">
+      <path d="M6 3.5h8l4.5 4.5V20a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 20V5A1.5 1.5 0 0 1 6 3.5Z"
+            stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+      <path d="M14 3.8V8.2h4.3M8 12h7M8 15.5h5" stroke="currentColor"
+            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+    </template>
+    <!-- data（数据库） -->
+    <template v-else-if="name === 'data'">
+      <ellipse cx="12" cy="5.5" rx="7.5" ry="3" stroke="currentColor" stroke-width="1.8" />
+      <path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"
+            stroke="currentColor" stroke-width="1.8" />
+      <path d="M4.5 11.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"
+            stroke="currentColor" stroke-width="1.8" />
+    </template>
+    <!-- audit（审计清单） -->
+    <template v-else-if="name === 'audit'">
+      <path d="M7 3.5h10A1.5 1.5 0 0 1 18.5 5v15.5H5.5V5A1.5 1.5 0 0 1 7 3.5Z"
+            stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+      <path d="M9 3.5V2.8h6v.7M8.5 9h7M8.5 12.3h4.5" stroke="currentColor"
+            stroke-width="1.7" stroke-linecap="round" />
+      <path d="m12.2 16.2 1.5 1.5 3-3.2" stroke="currentColor"
+            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+    </template>
     <!-- trading（K 线烛台 + 趋势） -->
     <template v-else-if="name === 'trading'">
       <path d="M7 3.5v3M7 15v5.5M17 3.5v5M17 17v3.5"

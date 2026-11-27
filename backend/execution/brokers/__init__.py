@@ -6,7 +6,7 @@ import logging
 
 from backend.config import Settings
 from backend.execution.brokers.base import BrokerAdapter, mask_account, stock_code
-from backend.execution.brokers.http_api import HttpBrokerAdapter
+from backend.execution.brokers.http_api import HttpBrokerAdapter, resolve_http_token
 from backend.execution.brokers.qmt import QmtBrokerAdapter
 from backend.execution.gateway import LiveGateway
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "BrokerAdapter", "HttpBrokerAdapter", "QmtBrokerAdapter",
-    "build_live_gateway", "mask_account", "stock_code",
+    "build_live_gateway", "mask_account", "resolve_http_token", "stock_code",
 ]
 
 
