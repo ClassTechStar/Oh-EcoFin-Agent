@@ -29,8 +29,12 @@ class OrderRouter:
         decision = self.gates.evaluate(order, ctx)
         if self.store is not None:
             self.store.save_order(order, "created", decision)
-            self.store.log_risk_event(decision, order_id=order.id,
-                                      symbol=order.symbol)
+            # 逐闸留痕：G1/G2 每次评估都落库（pass 也记录，便于复核）
+            for item in (decision.trace or [decision.to_dict()]):
+                self.store.log_risk_event(
+                    RiskDecision(item["allowed"], item["adjusted_qty"],
+                                 item["reasons"], item["severity"], item["gate"]),
+                    order_id=order.id, symbol=order.symbol)
 
         if not decision.allowed:
             if self.store is not None:

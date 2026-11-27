@@ -184,16 +184,18 @@ class GateChain:
     def evaluate(self, order: OrderRequest, ctx: AccountContext) -> RiskDecision:
         qty = order.qty
         reasons: list[str] = []
+        trace: list[dict] = []
         severity = "pass"
         for gate in self.gates:
             decision = gate.pre_trade(order.model_copy(update={"qty": qty}), ctx)
             if decision.adjusted_qty > qty:
                 raise ValueError(f"闸门 {gate.name} 试图加仓: {qty}→{decision.adjusted_qty}")
+            trace.append(decision.to_dict())
             reasons.extend(decision.reasons)
             if not decision.allowed or decision.adjusted_qty <= 0:
                 return RiskDecision(False, 0, reasons, "block",
-                                    gate.name)
+                                    gate.name, trace)
             if decision.adjusted_qty < qty or decision.severity == "warn":
                 severity = "warn"
                 qty = decision.adjusted_qty
-        return RiskDecision(True, qty, reasons, severity, "chain")
+        return RiskDecision(True, qty, reasons, severity, "chain", trace)

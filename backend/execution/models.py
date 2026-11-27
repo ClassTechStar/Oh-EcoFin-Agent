@@ -108,11 +108,12 @@ class RiskDecision:
     reasons: list[str] = field(default_factory=list)
     severity: Severity = "pass"
     gate: str = ""
+    trace: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {"allowed": self.allowed, "adjusted_qty": self.adjusted_qty,
                 "reasons": list(self.reasons), "severity": self.severity,
-                "gate": self.gate}
+                "gate": self.gate, "trace": list(self.trace)}
 
 
 class RiskGate(Protocol):
