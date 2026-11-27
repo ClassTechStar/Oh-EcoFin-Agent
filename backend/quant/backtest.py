@@ -26,6 +26,9 @@ COMMISSION_RATE = 0.00025
 MIN_COMMISSION = 5.0
 STAMP_DUTY = 0.0005
 INIT_CASH = 1_000_000
+LOT_SIZE = 100
+#: 权益曲线返回上限（曲线会进模型上下文，避免 token 爆炸）
+CURVE_LIMIT = 1200
 
 
 def validate_columns(df: pd.DataFrame) -> None:
@@ -104,6 +107,10 @@ class DualMAStrategy:
                 self.crossover = ema_fast - ema_slow  # 信号 t 收盘计算
                 self._buy_dates: list = []   # T+1 持仓账本
                 self._entry_price = 0.0
+                # 可审计输出（截断检验依赖：成交明细 / 拒绝计数 / 权益曲线）
+                self.executions: list[dict] = []
+                self.skipped: dict[str, int] = {"limit_hit": 0}
+                self.equity: list[dict] = []
 
             def next(self):
                 # 涨跌停：开盘较昨收触及档位 → 跳过当日下单（成交假设不成立）
@@ -113,6 +120,8 @@ class DualMAStrategy:
                     if prev_close:
                         chg = abs(open_today / prev_close - 1) * 100
                         if chg >= self.p.pct_limit * 0.99:
+                            self.skipped["limit_hit"] += 1
+                            self._record_equity()
                             return
                 today = self.data.datetime.date(0)
                 pos = self.position
@@ -127,12 +136,31 @@ class DualMAStrategy:
                     if can_sell and self.crossover[0] < 0:
                         self.close()
                         self._buy_dates = []
+                self._record_equity()
+
+            def _record_equity(self) -> None:
+                self.equity.append({
+                    "date": self.data.datetime.date(0).isoformat(),
+                    "value": round(float(self.broker.getvalue()), 2),
+                })
+
+            def notify_order(self, order):
+                """记录每一笔已成交委托（截断检验的比对基准）。"""
+                if order.status != order.Completed:
+                    return
+                self.executions.append({
+                    "date": self.data.datetime.date(0).isoformat(),
+                    "side": "buy" if order.isbuy() else "sell",
+                    "price": round(float(order.executed.price), 4),
+                    "size": int(abs(order.executed.size)),
+                    "commission": round(float(order.executed.comm), 2),
+                })
 
             def _allin_size(self) -> int:
                 cash = self.broker.getcash()
                 price = float(self.data.open[0])
-                size = int(cash * 0.995 / price / 100) * 100  # A股一手 100 股
-                return max(size, 100)
+                size = int(cash * 0.995 / price / LOT_SIZE) * LOT_SIZE  # A股一手 100 股
+                return max(size, LOT_SIZE)
 
         return _DualMA
 
@@ -180,10 +208,55 @@ def metrics_from_returns(returns: pd.Series, trade_pnls: list[float]) -> Backtes
     )
 
 
+def pair_round_trips(executions: list[dict]) -> list[dict]:
+    """把成交明细配对为完整回合（单仓位全进全出 → 买卖交替）。
+
+    pnl 口径 = 价差 × 股数 − 双边佣金；未平仓的买入不产出回合（诚实反映持仓）。
+    """
+    trips: list[dict] = []
+    open_buy: dict | None = None
+    for e in executions:
+        if e["side"] == "buy":
+            open_buy = e
+        elif open_buy is not None:
+            size = min(e["size"], open_buy["size"])
+            pnl = (e["price"] - open_buy["price"]) * size - e["commission"] - open_buy["commission"]
+            trips.append({
+                "entry_date": open_buy["date"], "exit_date": e["date"],
+                "entry_price": open_buy["price"], "exit_price": e["price"],
+                "size": size, "pnl": round(pnl, 2),
+            })
+            open_buy = None
+    return trips
+
+
+def _cost_model() -> dict:
+    """成本模型显式回传（让「扣了多少」可复核，而非埋在实现里）。"""
+    return {
+        "commission_rate": COMMISSION_RATE,
+        "min_commission": MIN_COMMISSION,
+        "stamp_duty": STAMP_DUTY,
+        "lot_size": LOT_SIZE,
+        "slippage": 0.0,  # Backtrader 侧未建模滑点，显式声明为 0
+    }
+
+
 def run_backtest(df: pd.DataFrame, symbol: str, fast: int = 5, slow: int = 20,
                  cash: float = INIT_CASH) -> dict:
-    """双均线回测主入口（同步函数，调用方在线程池执行）。"""
+    """双均线回测主入口（同步函数，调用方在线程池执行）。
+
+    返回结构对齐「可信回测」契约：metrics / cost_model / skipped / executions /
+    trades / equity_curve / data_asof / provider / warnings。
+    """
     import backtrader as bt
+
+    warnings: list[str] = []
+    if df is None or df.empty:
+        return {"ok": False, "reason": "K线数据为空", "symbol": symbol,
+                "warnings": ["empty dataframe"]}
+    df = df.sort_values("date").reset_index(drop=True)
+    if len(df) < 60:
+        warnings.append(f"样本偏少: {len(df)} 根（指标预热可能不足）")
 
     strategy_cls = DualMAStrategy.build(symbol, fast, slow)
     cerebro = build_cerebro(df, symbol, strategy_cls,
@@ -202,8 +275,29 @@ def run_backtest(df: pd.DataFrame, symbol: str, fast: int = 5, slow: int = 20,
     analysis = result.analyzers.timereturn.get_analysis()
     returns = pd.Series(analysis).astype(float)
     m = metrics_from_returns(returns, trade_pnls)
-    return {"ok": True, "symbol": symbol, "params": {"fast": fast, "slow": slow},
-            "metrics": m.__dict__, "final_value": cerebro.broker.getvalue()}
+
+    executions = list(getattr(result, "executions", []))
+    equity = list(getattr(result, "equity", []))
+    skipped = dict(getattr(result, "skipped", {}))
+
+    return {
+        "ok": True,
+        "symbol": symbol,
+        "params": {"fast": fast, "slow": slow},
+        "metrics": m.__dict__,
+        "final_value": round(float(cerebro.broker.getvalue()), 2),
+        # —— 审计字段 ——
+        "executions": executions,
+        "trades": pair_round_trips(executions),
+        "equity_curve": equity[-CURVE_LIMIT:],
+        "cost_model": _cost_model(),
+        "skipped": skipped,
+        "data_asof": str(df["date"].iloc[-1])[:10],
+        "data_start": str(df["date"].iloc[0])[:10],
+        "provider": "dataframe",
+        "bars": len(df),
+        "warnings": warnings,
+    }
 
 
 def grid_search(df: pd.DataFrame, symbol: str,

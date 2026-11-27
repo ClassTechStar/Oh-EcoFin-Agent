@@ -84,9 +84,117 @@ CREATE TABLE IF NOT EXISTS pending_asks(
   state TEXT,
   created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS debate_runs(
+  id TEXT PRIMARY KEY,
+  symbol TEXT,
+  as_of TEXT,
+  context_id TEXT,
+  status TEXT,
+  verdict TEXT,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS debate_sections(
+  run_id TEXT,
+  role TEXT,
+  round INTEGER,
+  raw_text TEXT,
+  model TEXT,
+  signal REAL,
+  strength REAL,
+  created_at TEXT,
+  PRIMARY KEY(run_id, role, round)
+);
+CREATE TABLE IF NOT EXISTS backtest_runs(
+  id TEXT PRIMARY KEY,
+  strategy_id TEXT,
+  spec_hash TEXT,
+  start_date TEXT,
+  end_date TEXT,
+  metrics_json TEXT,
+  cost_model_json TEXT,
+  skipped_json TEXT,
+  data_asof TEXT,
+  provider TEXT,
+  warnings_json TEXT
+);
+CREATE TABLE IF NOT EXISTS leak_reports(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  backtest_id TEXT,
+  cut_date TEXT,
+  passed INTEGER,
+  trades_before_cut INTEGER,
+  leaks_json TEXT,
+  skipped_reason TEXT
+);
+CREATE TABLE IF NOT EXISTS alpha_signals(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  model_name TEXT,
+  symbol TEXT,
+  as_of TEXT,
+  value REAL,
+  confidence REAL,
+  horizon_days INTEGER,
+  abstained INTEGER,
+  evidence_json TEXT
+);
+CREATE TABLE IF NOT EXISTS portfolio_targets(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  strategy_id TEXT,
+  as_of TEXT,
+  weights_json TEXT,
+  constraints_json TEXT,
+  flat_reason TEXT
+);
+CREATE TABLE IF NOT EXISTS orders(
+  id TEXT PRIMARY KEY,
+  strategy_id TEXT,
+  symbol TEXT,
+  side TEXT,
+  qty INTEGER,
+  price REAL,
+  order_type TEXT,
+  status TEXT,
+  risk_decision_json TEXT,
+  broker_order_id TEXT,
+  created_at TEXT,
+  updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS risk_events(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  level TEXT,
+  gate TEXT,
+  rule TEXT,
+  detail TEXT,
+  symbol TEXT,
+  order_id TEXT,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS promotions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  strategy_id TEXT,
+  spec_hash TEXT,
+  backtest_id TEXT,
+  approved INTEGER,
+  gates_json TEXT,
+  reasons_json TEXT,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS ledger(
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT,
+  ref_id TEXT,
+  payload_json TEXT,
+  payload_hash TEXT,
+  prev_hash TEXT,
+  created_at TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_toolcalls_session ON tool_calls(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_llmcalls_created ON llm_calls(created_at);
+CREATE INDEX IF NOT EXISTS idx_debate_sections_run ON debate_sections(run_id);
+CREATE INDEX IF NOT EXISTS idx_leak_reports_backtest ON leak_reports(backtest_id);
+CREATE INDEX IF NOT EXISTS idx_alpha_signals_symbol ON alpha_signals(symbol, as_of);
+CREATE INDEX IF NOT EXISTS idx_promotions_strategy ON promotions(strategy_id, id);
 """
 
 

@@ -25,6 +25,8 @@ jobs:
           ruff check backend scripts eval --exit-zero
       - name: 未来函数扫描（零报警门禁）
         run: python scripts/scan_future_functions.py
+      - name: 前视偏差截断检验（方法级审计门禁）
+        run: python scripts/audit_strategies.py
       - name: 单测 + 卡带回放集成（CI 零密钥零成本）
         env:
           FINAGENT_DB_PATH: ${{ runner.temp }}/finagent-test.db

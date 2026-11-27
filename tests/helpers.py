@@ -1,26 +1,16 @@
-"""合成行情数据 + Mock 网关（独立模块，供测试导入）。"""
+"""合成行情数据 + Mock 网关（独立模块，供测试导入）。
+
+合成数据已下沉到 `backend.quant.fixtures`（测试与 CI 审计门禁共用同一份），
+此处做再导出，避免两套 fixture 漂移。
+"""
 
 from __future__ import annotations
 
 import json
 
-import numpy as np
-import pandas as pd
+from backend.quant.fixtures import synthetic_ohlcv
 
-
-def synthetic_ohlcv(days: int = 600, seed: int = 7, start: float = 100.0) -> pd.DataFrame:
-    """合成日线 OHLCV（几何随机游走 + 趋势），含 date/open/high/low/close/volume。"""
-    rng = np.random.default_rng(seed)
-    drift = np.concatenate([np.full(days // 2, 0.0004), np.full(days - days // 2, -0.0002)])
-    ret = rng.normal(drift, 0.02, days)
-    close = start * np.cumprod(1 + ret)
-    open_ = close * (1 + rng.normal(0, 0.004, days))
-    high = np.maximum(open_, close) * (1 + np.abs(rng.normal(0, 0.008, days)))
-    low = np.minimum(open_, close) * (1 - np.abs(rng.normal(0, 0.008, days)))
-    volume = rng.integers(1_000_000, 8_000_000, days).astype(float)
-    dates = pd.bdate_range("2024-01-02", periods=days).strftime("%Y-%m-%d")
-    return pd.DataFrame({"date": dates, "open": open_, "high": high,
-                         "low": low, "close": close, "volume": volume})
+__all__ = ["synthetic_ohlcv", "FakeGateway"]
 
 
 class FakeGateway:
