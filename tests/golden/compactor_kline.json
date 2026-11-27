@@ -1,0 +1,32 @@
+{
+ "ok": true,
+ "kind": "kline",
+ "bars_count": 120,
+ "start": "2024-01-02",
+ "end": "2024-06-17",
+ "last_close": 69.92,
+ "period_pct": -30.11,
+ "trend": "down",
+ "ann_vol_pct": 27.1,
+ "ma20": 70.42,
+ "ma60": 73.67,
+ "ma20_dist_pct": -0.71,
+ "ma60_dist_pct": -5.09,
+ "supports": [
+  95.79,
+  95.82,
+  97.59,
+  98.94,
+  99.64
+ ],
+ "resistances": [
+  99.85,
+  100.23,
+  100.45,
+  100.5,
+  101.28
+ ],
+ "volume_note": "平量",
+ "data_as_of": "",
+ "is_stale": false
+}
