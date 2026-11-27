@@ -23,7 +23,6 @@ from pydantic import BaseModel, Field, ValidationError
 from backend.config import Settings, load_settings
 from backend.data.calendar import TradeCalendar
 from backend.data.precompute import PrecomputeService
-from backend.data.quality import check_suspended
 from backend.data.ratelimit import TokenBucket
 from backend.data.snapshot import SnapshotService
 from backend.db import AsyncDatabase, Database
@@ -37,10 +36,20 @@ from backend.execution import (
     CapitalGate,
     ExecutionStore,
     GateChain,
-    OrderRequest,
     OrderRouter,
     PaperBroker,
     SuitabilityGate,
+)
+from backend.execution.brokers import build_live_gateway, mask_account
+from backend.execution.gateway import GatewayError
+from backend.execution.service import (
+    InvalidRiskLevelError,
+    QuoteUnavailableError,
+    account_payload,
+    positions_prices,
+    submit_paper_order,
+    symbol_quote,
+    validate_risk_level,
 )
 from backend.memory.decisions import DecisionStore
 from backend.memory.reflections import history_block
@@ -55,26 +64,32 @@ from backend.memory.summarize import (
     should_summarize,
 )
 from backend.quant.audit_store import AuditStore
-from backend.quant.backtest import limit_pct_for
-from backend.quant.compliance import EQUITY_CAPS, SINGLE_CAPS
+from backend.quant.compliance import EQUITY_CAPS, review_advice
 from backend.quant.portfolio import PortfolioOptimizer
 from backend.security.keyring_loader import load_key, missing_required_keys
 from backend.security.logmask import SensitiveFilter, mask_result_for_storage
 from backend.security.tokens import generate_token, verify_token
-from backend.signals import (
-    MarketDataContext,
-    MaxWeight,
-    SignalStore,
-    compose,
-    default_models,
-    run_models,
+from backend.signals import SignalStore
+from backend.signals.service import SignalDataError, preview_signals
+from backend.tools.advisor import (
+    RISK_QUESTIONS,
+    AdvisorTools,
+    AskRiskParams,
+    PortfolioParams,
+    profile_for_level,
+    score_answers,
 )
-from backend.tools.advisor import RISK_QUESTIONS, AdvisorTools, AskRiskParams, PortfolioParams
 from backend.tools.market import KlineParams, MarketTools, QuoteParams
 from backend.tools.quant import BacktestParams, FactorParams, QuantTools, WalkForwardParams
 from backend.tools.registry import ToolRegistry, ToolSpec
 from backend.tools.research import CorrelationParams, ResearchReport, ResearchTools, SymbolParams
 from backend.tools.search import NewsParams, SearchService
+from backend.tools.trading import (
+    AccountToolParams,
+    PaperOrderToolParams,
+    SignalToolParams,
+    TradingTools,
+)
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -118,37 +133,19 @@ def _norm_symbol(raw: str) -> str:
     return sym
 
 
-def _symbol_quote(snapshot: SnapshotService, symbol: str) -> dict:
-    """快照 → 撮合参考价 / 涨跌停价（快照缺失即拒绝，不用客户端价格冒充）。"""
-    row = snapshot.row(symbol)
-    if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"快照无 {symbol}：请等待快照刷新，或使用 DEMO 卡带启动")
-    try:
-        price = float(row.get("最新价"))
-    except (TypeError, ValueError):
-        price = 0.0
-    if price <= 0:
-        raise HTTPException(status_code=404, detail=f"{symbol} 无有效最新价")
-    try:
-        pct = float(row.get("涨跌幅") or 0.0)
-    except (TypeError, ValueError):
-        pct = 0.0
-    name = str(row.get("名称") or "")
-    prev_close = price / (1 + pct / 100) if pct > -100 else price
-    limit = limit_pct_for(symbol, name)
-    return {
-        "symbol": symbol,
-        "name": name,
-        "price": round(price, 2),
-        "pct_chg": pct,
-        "prev_close": round(prev_close, 4),
-        "limit_up": round(prev_close * (1 + limit / 100), 2),
-        "limit_down": round(prev_close * (1 - limit / 100), 2),
-        "suspended": check_suspended(row),
-        "data_as_of": snapshot.as_of,
-    }
+class AdvisorAssessRequest(BaseModel):
+    answers: list[dict] = Field(..., min_length=5, max_length=5)
+
+
+class AdvisorPortfolioRequest(BaseModel):
+    symbols: list[str] = Field(..., min_length=3, max_length=10)
+    level: str = "R3"
+    industry: dict[str, str] = Field(default_factory=dict)
+    statement: str = Field("", max_length=2000)
+
+
+class StatementCheckRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=2000)
 
 
 class AppContext:
@@ -181,7 +178,14 @@ class AppContext:
             GateChain([SuitabilityGate(), CapitalGate()]),
             self.broker, self.exec_store)
         self.paper_open_equity = float(self.broker.initial_cash)
+        self.live_connected = False
+        self.live_gateway = None
+        try:
+            self.live_gateway = build_live_gateway(settings)
+        except Exception:
+            logger.exception("实盘通道装配失败（保持关闭）")
         self.registry = ToolRegistry()
+        self.advisor = None
         self.search = None
         self.gateway: LLMGateway | None = None
         self.react: ReActEngine | None = None
@@ -201,7 +205,11 @@ class AppContext:
 
         research = ResearchTools(self.market, self.search, self.precompute)
         advisor = AdvisorTools(self.market, self.optimizer)
+        self.advisor = advisor
         quant = QuantTools(self.market, store=AuditStore(self.db))
+        trading = TradingTools(
+            self.market, self.signal_store, self.router, self.broker,
+            self.snapshot, lambda: self.paper_open_equity)
         reg = self.registry
 
         async def search_news_tool(query: str, symbol: str = "",
@@ -257,6 +265,20 @@ class AppContext:
             "submit_research_report", "提交最终投研报告（结构化 JSON，"
             "正文数字必须 [n] 引用 citations，≥4 条）。",
             ResearchReport, research.submit_research_report, compressor="raw",
+            parallel_safe=False))
+        reg.register(ToolSpec(
+            "get_alpha_signals", "运行内置 Alpha 模型并合成目标权重（只读，不生成委托）。"
+            "弃权模型会显式标注原因；权重已过约束层。",
+            SignalToolParams, trading.get_alpha_signals, compressor="raw",
+            parallel_safe=True))
+        reg.register(ToolSpec(
+            "get_paper_account", "查询仿真账户（现金/权益/持仓/当日盈亏/对账状态），只读。",
+            AccountToolParams, trading.get_paper_account, compressor="raw",
+            parallel_safe=True))
+        reg.register(ToolSpec(
+            "submit_paper_order", "提交仿真委托（不涉及真实资金）。必须经 G1 适当性 / "
+            "G2 资金仓位闸；仅在用户明确要求交易时调用，成交价由服务端快照决定。",
+            PaperOrderToolParams, trading.submit_paper_order, compressor="raw",
             parallel_safe=False))
 
         ledger = CostLedger(self.adb, s.llm.daily_cost_cap_cny)
@@ -351,66 +373,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ---------- M7/M10 看板辅助 ----------
 
-    def _paper_prices(symbols: list[str]) -> dict[str, float]:
-        prices: dict[str, float] = {}
-        for sym in symbols:
-            row = ctx.snapshot.row(sym)
-            price = 0.0
-            if row is not None:
-                try:
-                    price = float(row.get("最新价") or 0.0)
-                except (TypeError, ValueError):
-                    price = 0.0
-            prices[sym] = price if price > 0 else ctx.broker.positions[sym].avg_cost
-        return prices
-
-    def _paper_context(risk_level: str):
-        prices = _paper_prices(list(ctx.broker.positions))
-        equity = ctx.broker.context(prices).total_equity
-        acct = ctx.broker.context(
-            prices, risk_level=risk_level,
-            daily_pnl=equity - ctx.paper_open_equity,
-            daily_loss_limit=0.02)
-        return acct, prices, equity
-
     def _paper_account(risk_level: str) -> dict:
-        acct, prices, equity = _paper_context(risk_level)
-        recon = ctx.broker.reconcile(prices)
-        positions = []
-        for sym, pos in ctx.broker.positions.items():
-            if pos.qty <= 0:
-                continue
-            price = prices.get(sym, pos.avg_cost)
-            positions.append({
-                "symbol": sym,
-                "qty": pos.qty,
-                "available_qty": pos.available_qty,
-                "avg_cost": round(pos.avg_cost, 4),
-                "price": round(price, 2),
-                "market_value": round(pos.qty * price, 2),
-                "pnl": round((price - pos.avg_cost) * pos.qty, 2),
-                "pnl_pct": round(price / pos.avg_cost - 1, 4) if pos.avg_cost else 0.0,
-            })
-        return {
-            "risk_level": risk_level,
-            "initial_cash": round(ctx.broker.initial_cash, 2),
-            "cash": round(ctx.broker.cash, 2),
-            "market_value": recon["market_value"],
-            "equity": equity,
-            "daily_pnl": round(equity - ctx.paper_open_equity, 2),
-            "position_ratio": round(1 - ctx.broker.cash / equity, 4) if equity else 0.0,
-            "positions": positions,
-            "reconcile": recon,
-            "fills": len(ctx.broker.fills),
-            "caps": {"equity": EQUITY_CAPS, "single": SINGLE_CAPS},
-            "disclaimer": DISCLAIMER,
-        }
+        payload = account_payload(ctx.broker, ctx.snapshot, risk_level,
+                                  ctx.paper_open_equity)
+        payload["disclaimer"] = DISCLAIMER
+        return payload
 
     def _risk_level(raw: str) -> str:
-        level = str(raw).strip().upper()
-        if level not in EQUITY_CAPS:
-            raise HTTPException(status_code=400, detail=f"未知风险等级: {raw}")
-        return level
+        try:
+            return validate_risk_level(raw)
+        except InvalidRiskLevelError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     # ---------- 基础端点 ----------
 
@@ -471,60 +444,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                              gross: float = Query(0.8, gt=0, le=1,
                                                   description="目标总仓位")):
         sym = _norm_symbol(symbol)
-        if mode not in ("long_only", "long_short", "dollar_neutral"):
-            raise HTTPException(status_code=400, detail=f"未知组合模式: {mode}")
         try:
-            df = await ctx.market.get_kline_raw(sym, 200, "hfq")
-        except Exception as e:
-            raise HTTPException(status_code=503, detail=f"K线获取失败: {e}") from e
-        if df is None or len(df) < 60:
-            raise HTTPException(status_code=400,
-                                detail=f"{sym} K线不足（{0 if df is None else len(df)} 根）")
-        as_of = str(df["date"].iloc[-1])[:10]
-        data_ctx = MarketDataContext(ctx.market, as_of=as_of)
-        models = default_models()
-        run = await run_models(models, [sym], as_of, data_ctx)
-        weights = {m.name: 1.0 for m in models}
-        constraints = [MaxWeight(0.25)]
-        result = compose(run, weights, gross, mode=mode, constraints=constraints)
-
-        loop = asyncio.get_running_loop()
-        saved = 0
-        try:
-            saved = await loop.run_in_executor(
-                None, ctx.signal_store.save_signals, run.signals)
-            await loop.run_in_executor(
-                None, ctx.signal_store.save_target,
-                f"signals:{mode}", as_of, result.weights,
-                [{"type": "max_weight", "cap": 0.25}], result.blend.flat_reason)
-        except Exception:
-            logger.exception("信号落库失败")
-
-        return {
-            "ok": True,
-            "symbol": sym,
-            "as_of": as_of,
-            "mode": mode,
-            "gross_target": gross,
-            "models": [{"name": m.name, "approach": m.investment_approach,
-                        "horizon_days": m.horizon_days} for m in models],
-            "signals": [s.model_dump() for s in run.signals],
-            "weights": result.weights,
-            "raw_weights": result.raw_weights,
-            "convictions": result.blend.convictions,
-            "flat_reason": result.blend.flat_reason,
-            "failures": result.failures,
-            "constraints": [{"type": "max_weight", "cap": 0.25}],
-            "saved_signals": saved,
-            "disclaimer": DISCLAIMER,
-        }
+            payload = await preview_signals(ctx.market, ctx.signal_store, sym,
+                                            mode=mode, gross=gross)
+        except SignalDataError as e:
+            status = 503 if str(e).startswith("K线获取失败") else 400
+            raise HTTPException(status_code=status, detail=str(e)) from e
+        return {**payload, "disclaimer": DISCLAIMER}
 
     # ---------- M10 仿真执行看板 ----------
 
     @app.get("/api/paper/quote/{symbol}")
     async def paper_quote(symbol: str):
-        return {"quote": _symbol_quote(ctx.snapshot, _norm_symbol(symbol)),
-                "disclaimer": DISCLAIMER}
+        try:
+            quote = symbol_quote(ctx.snapshot, _norm_symbol(symbol))
+        except QuoteUnavailableError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"quote": quote, "disclaimer": DISCLAIMER}
 
     @app.get("/api/paper/account")
     async def paper_account(risk_level: str = "R3"):
@@ -532,26 +468,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/paper/orders")
     async def paper_order(req: PaperOrderRequest):
-        risk = _risk_level(req.risk_level)
         sym = _norm_symbol(req.symbol)
-        quote = _symbol_quote(ctx.snapshot, sym)
+        _risk_level(req.risk_level)
         try:
-            order = OrderRequest(
+            result = await submit_paper_order(
+                ctx.router, ctx.broker, ctx.snapshot,
+                day_open_equity=ctx.paper_open_equity,
                 symbol=sym, side=req.side, qty=req.qty,
-                strategy_id=req.strategy_id, price=quote["price"],
+                risk_level=req.risk_level, strategy_id=req.strategy_id,
                 order_type=req.order_type, limit_price=req.limit_price)
-        except ValidationError as e:
+        except QuoteUnavailableError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except (InvalidRiskLevelError, ValidationError, ValueError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        acct, _, _ = _paper_context(risk)
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None, lambda: ctx.router.submit(
-                order, acct, market_price=quote["price"],
-                limit_up=quote["limit_up"], limit_down=quote["limit_down"],
-                suspended=quote["suspended"]))
-        return {"ok": result.get("ok", False), "order": result,
-                "quote": quote, "account": _paper_account(risk),
-                "disclaimer": DISCLAIMER}
+        return {**result, "disclaimer": DISCLAIMER}
 
     @app.get("/api/paper/orders")
     async def paper_orders(strategy_id: str = "",
@@ -571,10 +501,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """教学演示：模拟交易日切换（T+1 解冻 + 日初权益重置）。"""
         risk = _risk_level(risk_level)
         ctx.broker.roll_day()
-        prices = _paper_prices(list(ctx.broker.positions))
+        prices = positions_prices(ctx.broker, ctx.snapshot)
         ctx.paper_open_equity = ctx.broker.context(prices).total_equity
         return {"ok": True, "account": _paper_account(risk),
                 "disclaimer": DISCLAIMER}
+
+    # ---------- P2 实盘通道（默认关闭，只读状态 + 显式探测） ----------
+
+    @app.get("/api/live/status")
+    async def live_status():
+        cfg = settings.execution
+        if ctx.live_gateway is None:
+            return {
+                "enabled": False, "configured": False,
+                "adapter": cfg.broker_kind, "connected": False, "account": "",
+                "detail": "实盘通道未启用（FINAGENT_EXECUTION__LIVE_ENABLED=1 开启，"
+                          "并配置券商账户/路径）",
+                "disclaimer": DISCLAIMER,
+            }
+        return {
+            "enabled": True, "configured": True,
+            "adapter": cfg.broker_kind, "connected": ctx.live_connected,
+            "account": mask_account(cfg.account_id),
+            "detail": "实盘通道已装配，但未自动连接；交易需显式探测并人工确认",
+            "disclaimer": DISCLAIMER,
+        }
+
+    @app.post("/api/live/probe")
+    async def live_probe():
+        if ctx.live_gateway is None:
+            raise HTTPException(status_code=400,
+                                detail="实盘通道未启用：先配置 execution.live_enabled")
+        try:
+            await ctx.live_gateway.connect()
+            ctx.live_connected = await ctx.live_gateway.health()
+            return {"ok": ctx.live_connected, "connected": ctx.live_connected,
+                    "adapter": settings.execution.broker_kind,
+                    "detail": "连接与健康检查通过" if ctx.live_connected
+                              else "连接成功但健康检查未通过",
+                    "disclaimer": DISCLAIMER}
+        except GatewayError as e:
+            ctx.live_connected = False
+            return {"ok": False, "connected": False,
+                    "adapter": settings.execution.broker_kind,
+                    "error": str(e), "hint": getattr(e, "hint", ""),
+                    "disclaimer": DISCLAIMER}
 
     @app.get("/api/risk-questions")
     async def risk_questions():
@@ -582,6 +553,57 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"qid": q["qid"], "dimension": q["dimension"], "question": q["question"],
              "options": [o["text"] for o in q["options"]]} for q in RISK_QUESTIONS],
             "equity_caps": EQUITY_CAPS, "disclaimer": DISCLAIMER}
+
+    # ---------- M11 投顾与合规看板 ----------
+
+    @app.post("/api/advisor/assess")
+    async def advisor_assess(req: AdvisorAssessRequest):
+        qids = [str(a.get("qid", "")) for a in req.answers]
+        if len(set(qids)) != len(qids):
+            raise HTTPException(status_code=400, detail="答案存在重复题目")
+        missing = {q["qid"] for q in RISK_QUESTIONS} - set(qids)
+        if missing:
+            raise HTTPException(status_code=400,
+                                detail=f"缺少题目答案: {sorted(missing)}")
+        try:
+            total, level = score_answers(req.answers)
+            profile = profile_for_level(level)
+        except (ValueError, KeyError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"ok": True, "score": total, "level": level, "profile": profile,
+                "equity_cap": EQUITY_CAPS[level],
+                "single_cap": profile["single_cap"],
+                "disclaimer": DISCLAIMER}
+
+    @app.post("/api/advisor/portfolio")
+    async def advisor_portfolio(req: AdvisorPortfolioRequest):
+        try:
+            params = PortfolioParams(symbols=req.symbols, level=req.level)
+        except ValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if ctx.advisor is None:
+            raise HTTPException(status_code=503, detail="投顾服务未装配")
+        try:
+            result = await ctx.advisor.portfolio_optimize(params.symbols, params.level)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if result.get("ok"):
+            review = review_advice(
+                result["weights"], params.level, industry=req.industry,
+                statement=req.statement)
+            result = {**result, "compliance_report": review,
+                      "status": review["status"]}
+        else:
+            result = {**result, "status": "attention",
+                      "compliance_report": {"status": "attention",
+                                            "violations": [],
+                                            "disclaimer": DISCLAIMER}}
+        return {**result, "disclaimer": DISCLAIMER}
+
+    @app.post("/api/advisor/statement")
+    async def advisor_statement(req: StatementCheckRequest):
+        review = review_advice({}, "R3", statement=req.text)
+        return {"ok": True, **review}
 
     # ---------- 会话切换：SSE 断线重连重放 ----------
 

@@ -70,6 +70,28 @@ DISCLAIMER_TEXT = (
     "数据可能存在延迟或误差，请以交易所官方信息为准。"
 )
 
+#: 五档风险画像（报告 1.8：保守/稳健/平衡/成长/进取）
+PROFILES = {
+    "R1": {"label": "保守", "equity_cap": 0.0, "single_cap": 0.0,
+           "drawdown": "≤5%", "horizon": "1 年以内", "benchmark": "货币基金/存款"},
+    "R2": {"label": "稳健", "equity_cap": 0.10, "single_cap": 0.10,
+           "drawdown": "≤10%", "horizon": "1-3 年", "benchmark": "纯债/固收+"},
+    "R3": {"label": "平衡", "equity_cap": 0.35, "single_cap": 0.20,
+           "drawdown": "≤15%", "horizon": "3 年左右", "benchmark": "股债平衡"},
+    "R4": {"label": "成长", "equity_cap": 0.45, "single_cap": 0.25,
+           "drawdown": "≤25%", "horizon": "3-5 年", "benchmark": "沪深 300"},
+    "R5": {"label": "进取", "equity_cap": 0.50, "single_cap": 0.30,
+           "drawdown": ">25%", "horizon": "5 年以上", "benchmark": "偏股指数"},
+}
+
+
+def profile_for_level(level: str) -> dict:
+    profile = PROFILES.get(level)
+    if profile is None:
+        raise ValueError(f"未知风险等级: {level}")
+    return {"level": level, **profile}
+
+
 
 def score_answer(question: dict, choice_text: str) -> int:
     """按选项文本计分（话术可变、评分口径不可变——按选项序号兜底）。"""

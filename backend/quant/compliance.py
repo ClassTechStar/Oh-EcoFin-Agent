@@ -12,6 +12,21 @@ from dataclasses import dataclass, field
 EQUITY_CAPS = {"R1": 0.0, "R2": 0.10, "R3": 0.35, "R4": 0.45, "R5": 0.50}
 SINGLE_CAPS = {"R1": 0.0, "R2": 0.10, "R3": 0.20, "R4": 0.25, "R5": 0.30}
 
+#: 行业集中度告警阈值（参考 multi-agent-robo-advisor 合规四项）
+INDUSTRY_CAP = 0.33
+
+#: 收益承诺敏感表述（合规审查只做确定性词表，不依赖模型自觉）
+PROMISE_PHRASES = (
+    "保证收益", "保本保息", "稳赚不赔", "稳赚", "无风险", "必涨", "必赚",
+    "承诺收益", "确定收益", "包赚", "零风险", "绝对收益",
+)
+
+#: 教学演示统一免责声明
+ADVICE_DISCLAIMER = (
+    "本组合由教学演示智能体生成，仅供课程学习使用，不构成任何投资建议；"
+    "数据可能存在延迟或误差，请以交易所官方信息为准。"
+)
+
 # 权益类标的识别（A 股：沪深主板/创业板/科创板均为股票；基金/债券/现金类不在其列）
 EQUITY_PREFIXES = ("6", "0", "3")
 
@@ -86,3 +101,54 @@ def map_score_to_level(total_score: int) -> str:
     if total_score < 22:
         return "R4"
     return "R5"
+
+
+def check_industry_concentration(weights: dict[str, float],
+                                 industry: dict[str, str] | None,
+                                 cap: float = INDUSTRY_CAP) -> list[Violation]:
+    """行业集中度：任一行权重和 > cap 报警（缺映射则跳过，不猜行业）。"""
+    if not industry:
+        return []
+    exposure: dict[str, float] = {}
+    for symbol, weight in weights.items():
+        group = industry.get(symbol)
+        if group:
+            exposure[group] = exposure.get(group, 0.0) + abs(float(weight))
+    return [
+        Violation("industry_concentration",
+                  f"行业 {group} 权重 {value:.1%} 超集中度上限 {cap:.0%}", "warn")
+        for group, value in sorted(exposure.items()) if value > cap + 1e-9
+    ]
+
+
+def check_return_promise(text: str) -> list[Violation]:
+    """收益表述审查：命中承诺类词表即告警（不做语义推断，可解释可复核）。"""
+    if not text:
+        return []
+    hits = [p for p in PROMISE_PHRASES if p in text]
+    if not hits:
+        return []
+    return [Violation("return_promise",
+                      f"检测到收益承诺类表述：{', '.join(hits)}（禁止承诺收益）",
+                      "block")]
+
+
+def review_advice(weights: dict[str, float], level: str, *,
+                  industry: dict[str, str] | None = None,
+                  statement: str = "",
+                  disclaimer: str = ADVICE_DISCLAIMER) -> dict:
+    """合规四项汇总：适当性/集中度/收益表述/免责声明 → status + 明细。"""
+    defensive = {s for s in weights if str(s).startswith(("511", "019", "518"))
+                 or str(s).upper() in ("CASH", "BOND")}
+    portfolio = Portfolio(weights=weights, disclaimer=disclaimer,
+                          defensive=defensive)
+    violations = compliance_check(portfolio, level)
+    violations += check_industry_concentration(weights, industry)
+    violations += check_return_promise(statement)
+    return {
+        "status": "attention" if violations else "passed",
+        "violations": [{"rule": v.rule, "detail": v.detail,
+                        "severity": v.severity} for v in violations],
+        "disclaimer": disclaimer,
+    }
+
