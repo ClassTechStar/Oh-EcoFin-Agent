@@ -477,7 +477,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not settings.app.demo_mode:
             # 交易日历补抓（跨年自动补抓）；DEMO_MODE 跳过联网
             asyncio.get_running_loop().create_task(ctx.calendar.refresh())
-        await ctx.snapshot.refresh_once()
+        try:
+            # 启动不阻塞于外部行情源：超时后先提供 /api/health，后台循环继续重试
+            await asyncio.wait_for(ctx.snapshot.refresh_once(), timeout=20)
+        except TimeoutError:
+            logger.warning("启动快照刷新超时（20s），继续启动并在后台重试")
         ctx.snapshot.start()
         # T+N 决策结算定时任务（交易日历感知，30 分钟一次）
         settle_stop = asyncio.Event()

@@ -23,14 +23,13 @@ COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 COPY backend ./backend
 COPY scripts ./scripts
-COPY config.yaml.example ./config.yaml
 COPY --from=frontend /frontend/dist ./frontend/dist
 
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 EXPOSE 8765
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=3)" || exit 1
 
 CMD ["python", "-m", "backend.app"]
