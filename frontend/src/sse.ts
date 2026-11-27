@@ -139,6 +139,26 @@ export const api = {
   paperRiskEvents: (limit = 50) => rest<any>(`/paper/risk-events?limit=${limit}`),
   paperRollDay: (riskLevel = 'R3') =>
     rest<any>(`/paper/roll-day?risk_level=${encodeURIComponent(riskLevel)}`, { method: 'POST' }),
+  advisorAssess: (answers: any[]) =>
+    rest<any>('/advisor/assess', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers })
+    }),
+  advisorPortfolio: (body: any) =>
+    rest<any>('/advisor/portfolio', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }),
+  advisorStatement: (text: string) =>
+    rest<any>('/advisor/statement', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    }),
+  liveStatus: () => rest<any>('/live/status'),
+  liveProbe: () => rest<any>('/live/probe', { method: 'POST' }),
   resume: (sessionId: string, qid: string, choice: string) =>
     rest<any>('/chat/resume', {
       method: 'POST',

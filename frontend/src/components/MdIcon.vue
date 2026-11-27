@@ -28,6 +28,13 @@ const props = defineProps<{ name: string; size?: number | string }>()
       <rect x="4.8" y="6.5" width="4.4" height="8.5" rx="1.3" stroke="currentColor" stroke-width="1.7" />
       <rect x="14.8" y="8.5" width="4.4" height="8.5" rx="1.3" stroke="currentColor" stroke-width="1.7" />
     </template>
+    <!-- shield（合规） -->
+    <template v-else-if="name === 'shield'">
+      <path d="M12 3 5 6v5c0 4.6 2.9 8 7 10 4.1-2 7-5.4 7-10V6l-7-3Z"
+            stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+      <path d="m8.8 11.8 2.2 2.2 4.2-4.4" stroke="currentColor" stroke-width="1.9"
+            stroke-linecap="round" stroke-linejoin="round" />
+    </template>
     <!-- history -->
     <template v-else-if="name === 'history'">
       <circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8" />

@@ -25,6 +25,8 @@ const orders = ref<any[]>([])
 const events = ref<any[]>([])
 const quote = ref<any>(null)
 const signals = ref<any>(null)
+const live = ref<any>(null)
+const probing = ref(false)
 
 const loadingAccount = ref(false)
 const runningSignals = ref(false)
@@ -92,6 +94,22 @@ async function refreshAll() {
   await Promise.all([refreshAccount(), refreshLedger()])
 }
 
+async function refreshLive() {
+  try { live.value = await api.liveStatus() } catch { live.value = null }
+}
+
+async function probeLive() {
+  probing.value = true
+  try {
+    const r = await api.liveProbe()
+    live.value = await api.liveStatus()
+    show(r.ok ? '实盘通道连接成功' : `实盘探测失败：${r.error || r.detail}`,
+         r.ok ? 'success' : 'error', 5000)
+  } catch (e) {
+    show(`实盘探测失败：${errText(e)}`, 'error')
+  } finally { probing.value = false }
+}
+
 async function refreshQuote() {
   quoteError.value = ''
   if (!validSymbol.value) { quote.value = null; return }
@@ -154,7 +172,7 @@ watch(symbol, () => {
 })
 
 onMounted(async () => {
-  await refreshAll()
+  await Promise.all([refreshAll(), refreshLive()])
   await refreshQuote()
 })
 onUnmounted(() => { if (symbolTimer) clearTimeout(symbolTimer) })
@@ -177,6 +195,15 @@ onUnmounted(() => { if (symbolTimer) clearTimeout(symbolTimer) })
             <MdChip v-for="lvl in RISK_LEVELS" :key="lvl" :selected="riskLevel === lvl"
                     @click="riskLevel = lvl">{{ lvl }}</MdChip>
           </div>
+        </div>
+        <div class="toolbar__live">
+          <span :class="['live-badge',
+            live?.connected ? 'live-badge--on'
+              : live?.enabled ? 'live-badge--ready' : 'live-badge--off']">
+            {{ live?.enabled ? (live.connected ? '实盘已连接' : '实盘待连接') : '实盘未启用' }}
+          </span>
+          <MdButton v-if="live?.enabled" variant="text" small icon="monitor"
+                    :loading="probing" @click="probeLive">探测</MdButton>
         </div>
         <MdButton icon="refresh" :loading="loadingAccount" @click="refreshAll">刷新账户</MdButton>
       </div>
@@ -438,6 +465,14 @@ onUnmounted(() => { if (symbolTimer) clearTimeout(symbolTimer) })
 .toolbar__risk { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
 .toolbar__label { font-size: var(--type-label); color: var(--text-secondary); font-weight: 600; }
 .toolbar__chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.toolbar__live { display: flex; align-items: center; gap: 6px; padding-top: 12px; }
+.live-badge {
+  padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: var(--md-surface-container-high); color: var(--text-muted);
+}
+.live-badge--on { background: var(--down-bg); color: var(--down); }
+.live-badge--ready { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); }
+.live-badge--off { opacity: 0.8; }
 
 .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); }
 .stat { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
