@@ -1,0 +1,73 @@
+/* 全局基础样式（全局纪律移植自 CyreneCompass styles.css，色彩全部走 MD3 蓝色 Token） */
+
+* { box-sizing: border-box; }
+html, body, #app { margin: 0; padding: 0; height: 100%; }
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--type-body);
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
+}
+
+img, svg { -webkit-user-drag: none; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { border: 0; padding: 0; background: transparent; cursor: pointer; }
+button:disabled { cursor: default; }
+
+/* 滚动条（内容区可见，窗口级隐藏 —— CyreneCompass 全局纪律） */
+html { scrollbar-width: thin; scrollbar-color: var(--border-default) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+::-webkit-scrollbar-track { background: transparent; }
+
+::selection { background: var(--accent-200); color: var(--text-primary); }
+
+/* 焦点环（MD3：2px primary + 2px offset） */
+:where(button, [role="button"], a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
+}
+
+/* 触摸目标最小 48px（MD3 无障碍） */
+@media (pointer: coarse) {
+  :where(button, [role="button"]) { min-width: 44px; min-height: 44px; }
+}
+
+/* 骨架屏（防"白屏即卡顿"错觉） */
+.skeleton {
+  background: linear-gradient(90deg, var(--md-surface-container) 25%, var(--md-surface-container-high) 50%, var(--md-surface-container) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: var(--md-radius-m);
+}
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* 过渡动画（页面切换：Page 档） */
+.page-enter-active { transition: opacity var(--motion-fade-in), transform var(--motion-page); }
+.page-leave-active { transition: opacity var(--motion-fade-out); }
+.page-enter-from { opacity: 0; transform: translateY(6px); }
+.page-leave-to { opacity: 0; }
+
+/* 通用卡片底（MD3 filled card：surface-container-low） */
+.md-card {
+  background: var(--bg-card);
+  border-radius: var(--md-radius-l);
+}
+.md-card--outlined {
+  background: var(--md-surface);
+  border: 1px solid var(--border-default);
+}
+.md-card--elevated {
+  background: var(--md-surface-container-lowest);
+  box-shadow: var(--md-elev-1);
+}
+
+@media (max-width: 768px) {
+  .desktop-only { display: none !important; }
+}

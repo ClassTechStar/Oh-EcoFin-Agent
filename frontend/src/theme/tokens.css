@@ -1,0 +1,251 @@
+/* ============================================================
+   Oh EcoFin Agent 设计 Token · 单一来源（三端同源）
+   体系：Material Design 3（对齐 mochi-compose 组件规范）
+   + CyreneCompass 式 accent 派生架构（兼容变量名别名）
+   主题色：蓝色系（替换原粉红 #ea5ec1 体系，无粉色残留）
+   铁律：A 股红涨绿跌 —— --up 红 / --down 绿 为领域语义色，与主题色无关
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* ---------- MD3 颜色角色 · 蓝色 tonal palette（种子色 #3557C7） ---------- */
+  --md-primary: #3557c7;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #dbe2ff;
+  --md-on-primary-container: #001454;
+  --md-inverse-primary: #b0c4ff;
+
+  --md-secondary: #575e71;
+  --md-on-secondary: #ffffff;
+  --md-secondary-container: #dbe2f9;
+  --md-on-secondary-container: #141b2c;
+
+  --md-tertiary: #00696b;
+  --md-on-tertiary: #ffffff;
+  --md-tertiary-container: #9cf0f2;
+  --md-on-tertiary-container: #002021;
+
+  --md-background: #f9f9ff;
+  --md-on-background: #1a1b21;
+  --md-surface: #f9f9ff;
+  --md-on-surface: #1a1b21;
+  --md-surface-variant: #e1e2ec;
+  --md-on-surface-variant: #44464f;
+  --md-surface-tint: #3557c7;
+
+  --md-surface-container-lowest: #ffffff;
+  --md-surface-container-low: #f3f3fa;
+  --md-surface-container: #ededf4;
+  --md-surface-container-high: #e7e8ef;
+  --md-surface-container-highest: #e2e2e9;
+
+  --md-outline: #74777f;
+  --md-outline-variant: #c4c6d0;
+
+  --md-error: #ba1a1a;
+  --md-on-error: #ffffff;
+  --md-error-container: #ffdad6;
+  --md-on-error-container: #410002;
+
+  --md-inverse-surface: #2f3036;
+  --md-inverse-on-surface: #f1f0f7;
+  --md-scrim: rgba(0, 0, 0, 0.5);
+  --md-shadow: #000000;
+
+  /* ---------- MD3 状态层（叠加在 on 色 / 主色上） ---------- */
+  --md-state-hover: 0.08;
+  --md-state-press: 0.12;
+  --md-state-drag: 0.16;
+  --md-state-focus: 2px;
+  --md-disabled-content: rgba(26, 27, 33, 0.38);
+  --md-disabled-container: rgba(26, 27, 33, 0.12);
+
+  /* ---------- MD3 形状刻度（mochi MochiShapes） ---------- */
+  --md-radius-xs: 4px;
+  --md-radius-s: 8px;
+  --md-radius-m: 12px;
+  --md-radius-l: 16px;
+  --md-radius-l-increased: 20px;
+  --md-radius-xl: 28px;
+  --md-radius-full: 999px;
+
+  /* ---------- MD3 海拔（elevation） ---------- */
+  --md-elev-1: 0 1px 2px rgba(0, 0, 0, 0.08), 0 1px 3px 1px rgba(0, 0, 0, 0.06);
+  --md-elev-2: 0 1px 2px rgba(0, 0, 0, 0.10), 0 2px 6px 2px rgba(0, 0, 0, 0.08);
+  --md-elev-3: 0 4px 8px 3px rgba(0, 0, 0, 0.10), 0 1px 3px rgba(0, 0, 0, 0.12);
+  --md-elev-4: 0 6px 10px 4px rgba(0, 0, 0, 0.12), 0 2px 3px rgba(0, 0, 0, 0.14);
+  --md-elev-5: 0 8px 12px 6px rgba(0, 0, 0, 0.14), 0 4px 4px rgba(0, 0, 0, 0.16);
+
+  /* ---------- 动效档位（mochi MochiMotionTokens） ---------- */
+  --motion-page: 420ms cubic-bezier(0.2, 0, 0, 1);            /* Page：临界阻尼 */
+  --motion-present: 420ms cubic-bezier(0.3, 1.06, 0.3, 1);    /* Present：1% 过冲 */
+  --motion-pop: 360ms cubic-bezier(0.34, 1.24, 0.5, 1);       /* Pop：明显回弹 */
+  --motion-settle: 280ms cubic-bezier(0.2, 0, 0, 1);          /* Settle：落定 */
+  --motion-control: 340ms cubic-bezier(0.2, 0, 0, 1);
+  --motion-bounce: 340ms cubic-bezier(0.34, 1.56, 0.64, 1);   /* Bounce：阻尼 0.55 */
+  --motion-press-down: 220ms cubic-bezier(0.3, 0, 0.8, 0.15); /* PressDown */
+  --motion-press-release: 380ms cubic-bezier(0.34, 1.3, 0.64, 1); /* PressRelease */
+  --motion-fade-in: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-fade-out: 120ms cubic-bezier(0.4, 0, 1, 1);
+
+  /* ---------- 排版字阶（MD3 简化 web 字阶） ---------- */
+  --font-ui: "HarmonyOS Sans SC", "MiSans", "PingFang SC", "Microsoft YaHei UI",
+             "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", Consolas, "Courier New", monospace;
+  --type-headline: 24px / 32px;
+  --type-title-lg: 22px / 28px;
+  --type-title: 16px / 24px;
+  --type-body: 14px / 20px;
+  --type-body-lg: 15px / 22px;
+  --type-label: 12px / 16px;
+
+  /* ---------- 间距（4dp 栅格） ---------- */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+
+  /* ---------- A 股领域语义色（红涨绿跌，非主题色） ---------- */
+  --up: #e03e3e;
+  --down: #0f8b6d;
+  --up-bg: rgba(224, 62, 62, 0.08);
+  --down-bg: rgba(15, 139, 109, 0.08);
+
+  /* ---------- 兼容别名（CyreneCompass 变量名 → MD3 蓝色角色） ---------- */
+  --accent: var(--md-primary);
+  --accent-light: var(--md-primary-container);
+  --accent-dark: #17357f;
+  --accent-hover: #2f4eb2;
+  --accent-50: rgba(53, 87, 199, 0.10);
+  --accent-200: rgba(53, 87, 199, 0.22);
+  --bg-base: var(--md-background);
+  --bg-card: var(--md-surface-container-low);
+  --bg-card-solid: var(--md-surface-container-lowest);
+  --bg-hover: var(--md-surface-container-high);
+  --text-primary: var(--md-on-surface);
+  --text-secondary: var(--md-on-surface-variant);
+  --text-muted: rgba(68, 70, 79, 0.72);
+  --text-on-accent: var(--md-on-primary);
+  --border-default: var(--md-outline-variant);
+  --border-subtle: rgba(196, 198, 208, 0.55);
+  --border-strong: var(--md-outline);
+  --shadow: var(--md-elev-1);
+  --radius-lg: var(--md-radius-l);
+
+  /* 旧组件变量名兼容映射（业务组件零破坏迁移到 MD3 Token） */
+  --font: var(--font-ui);
+  --bg: var(--md-background);
+  --surface: var(--md-surface-container-lowest);
+  --surface-2: var(--md-surface-container-high);
+  --primary: var(--md-primary);
+  --primary-light: var(--md-primary-container);
+  --text-2: var(--text-secondary);
+  --text-3: var(--text-muted);
+  --radius: var(--md-radius-l);
+  --radius-sm: var(--md-radius-s);
+  --warn: #8a6116;
+  --error: var(--md-error);
+  --ok: var(--down);
+  --stale: var(--warn);
+}
+
+:root[data-theme="dark"] {
+  --warn: #e0b568;
+}
+
+/* ---------- 深色主题 ---------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --md-primary: #b0c4ff;
+  --md-on-primary: #17286f;
+  --md-primary-container: #2a4296;
+  --md-on-primary-container: #dbe2ff;
+  --md-inverse-primary: #3557c7;
+
+  --md-secondary: #bfc6dc;
+  --md-on-secondary: #293042;
+  --md-secondary-container: #3f4759;
+  --md-on-secondary-container: #dbe2f9;
+
+  --md-tertiary: #83d3d5;
+  --md-on-tertiary: #003739;
+  --md-tertiary-container: #004f51;
+  --md-on-tertiary-container: #9cf0f2;
+
+  --md-background: #111318;
+  --md-on-background: #e3e2e9;
+  --md-surface: #111318;
+  --md-on-surface: #e3e2e9;
+  --md-surface-variant: #44464f;
+  --md-on-surface-variant: #c4c6d0;
+  --md-surface-tint: #b0c4ff;
+
+  --md-surface-container-lowest: #0c0e13;
+  --md-surface-container-low: #191c23;
+  --md-surface-container: #1d2027;
+  --md-surface-container-high: #282a32;
+  --md-surface-container-highest: #33353d;
+
+  --md-outline: #8e9099;
+  --md-outline-variant: #44464f;
+
+  --md-error: #ffb4ab;
+  --md-on-error: #690005;
+  --md-error-container: #93000a;
+  --md-on-error-container: #ffdad6;
+
+  --md-inverse-surface: #e3e2e9;
+  --md-inverse-on-surface: #2f3036;
+
+  --md-disabled-content: rgba(227, 226, 233, 0.38);
+  --md-disabled-container: rgba(227, 226, 233, 0.12);
+
+  /* 兼容别名（深色） */
+  --accent-light: #2a4296;
+  --accent-dark: #dbe2ff;
+  --accent-hover: #c8d5ff;
+  --accent-50: rgba(176, 196, 255, 0.14);
+  --accent-200: rgba(176, 196, 255, 0.26);
+  --bg-card: var(--md-surface-container-low);
+  --bg-card-solid: var(--md-surface-container-lowest);
+  --bg-hover: var(--md-surface-container-high);
+  --text-primary: var(--md-on-surface);
+  --text-secondary: var(--md-on-surface-variant);
+  --text-muted: rgba(196, 198, 208, 0.66);
+  --border-default: var(--md-outline-variant);
+  --border-subtle: rgba(68, 70, 79, 0.55);
+  --border-strong: var(--md-outline);
+}
+
+/* ---------- 触摸目标 / 数字等宽 / 无障碍 ---------- */
+.num, .metric, td.num, .price, .pct {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+.pct-up   { color: var(--up); }
+.pct-down { color: var(--down); }
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-page: 1ms; --motion-present: 1ms; --motion-pop: 1ms;
+    --motion-settle: 1ms; --motion-control: 1ms; --motion-bounce: 1ms;
+    --motion-press-down: 1ms; --motion-press-release: 1ms;
+    --motion-fade-in: 1ms; --motion-fade-out: 1ms;
+  }
+}
+
+/* ---------- MD3 状态层工具（供组件复用） ---------- */
+.state-layer { position: relative; overflow: hidden; }
+.state-layer::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: currentColor; opacity: 0;
+  transition: opacity var(--motion-fade-in);
+}
+.state-layer:hover::after { opacity: var(--md-state-hover); }
+.state-layer:active::after { opacity: var(--md-state-press); }
+
+:where(button, [role="button"], a, input, select, textarea, [tabindex]):focus-visible {
+  outline: var(--md-state-focus) solid var(--md-primary);
+  outline-offset: 2px;
+  border-radius: var(--md-radius-s);
+}
